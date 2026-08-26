@@ -22,70 +22,43 @@ export interface FamilyMemberData {
   created_at: string;
 }
 
-/**
- * Submit content for verification analysis
- */
-export async function verifyContent(formData: FormData): Promise<VerificationData> {
-  const response = await fetch(`${API_BASE_URL}/api/verify`, {
-    method: "POST",
-    body: formData,
-  });
+export interface ScenarioSummary {
+  id: number;
+  title: string;
+}
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(`Gagal memproses verifikasi: ${errorText || response.statusText}`);
-  }
+export interface ScenarioDetail {
+  id: number;
+  title: string;
+  narrative: string;
+  choice_a: string;
+  choice_b: string;
+}
 
-  return response.json();
+export interface ScenarioAnswerResponse {
+  scenario_id: number;
+  selected_choice: string;
+  is_correct: boolean;
+  correct_choice: string;
+  explanation: string;
+}
+
+export interface AuthResponse {
+  id: number;
+  name: string;
+  email: string;
+  token: string;
 }
 
 /**
- * Get verification detail by ID
+ * Register a new user account
  */
-export async function getVerification(id: string): Promise<VerificationData> {
-  const response = await fetch(`${API_BASE_URL}/api/verify/${id}`, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    throw new Error(`Data verifikasi ID '${id}' tidak ditemukan.`);
-  }
-
-  return response.json();
-}
-
-/**
- * Get all registered family members
- */
-export async function getFamilyMembers(): Promise<FamilyMemberData[]> {
-  const response = await fetch(`${API_BASE_URL}/api/family`, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    cache: "no-store",
-  });
-
-  if (!response.ok) {
-    throw new Error("Gagal mengambil daftar anggota keluarga.");
-  }
-
-  return response.json();
-}
-
-/**
- * Add a new family member
- */
-export async function addFamilyMember(data: {
-  member_name: string;
-  member_phone: string;
-  relation?: string;
-}): Promise<FamilyMemberData> {
-  const response = await fetch(`${API_BASE_URL}/api/family`, {
+export async function registerUser(data: {
+  name: string;
+  email: string;
+  password: string;
+}): Promise<AuthResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -94,7 +67,173 @@ export async function addFamilyMember(data: {
   });
 
   if (!response.ok) {
-    throw new Error("Gagal menambahkan anggota keluarga.");
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || "Gagal mendaftarkan akun baru.");
+  }
+
+  return response.json();
+}
+
+/**
+ * Submit content for verification analysis
+ */
+export async function verifyContent(formData: FormData, token?: string): Promise<VerificationData> {
+  const headers: Record<string, string> = {};
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/verify`, {
+    method: "POST",
+    headers,
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Gagal memproses verifikasi (${response.statusText})`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get verification detail by ID
+ */
+export async function getVerification(id: string, token?: string): Promise<VerificationData> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/verify/${id}`, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Data verifikasi ID '${id}' tidak ditemukan.`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Get all registered family members
+ */
+export async function getFamilyMembers(token?: string): Promise<FamilyMemberData[]> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/family`, {
+    method: "GET",
+    headers,
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || "Gagal mengambil daftar anggota keluarga.");
+  }
+
+  return response.json();
+}
+
+/**
+ * Add a new family member
+ */
+export async function addFamilyMember(
+  data: {
+    member_name: string;
+    member_phone: string;
+    relation?: string;
+  },
+  token?: string
+): Promise<FamilyMemberData> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/family`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || "Gagal menambahkan anggota keluarga.");
+  }
+
+  return response.json();
+}
+
+/**
+ * Get list of all educational scenarios (ID and Title)
+ */
+export async function getScenariosList(): Promise<ScenarioSummary[]> {
+  const response = await fetch(`${API_BASE_URL}/api/scenarios`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error("Gagal mengambil daftar skenario edukasi.");
+  }
+
+  return response.json();
+}
+
+/**
+ * Get detail of a specific educational scenario
+ */
+export async function getScenarioDetail(id: number): Promise<ScenarioDetail> {
+  const response = await fetch(`${API_BASE_URL}/api/scenarios/${id}`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Gagal mengambil detail skenario ID ${id}.`);
+  }
+
+  return response.json();
+}
+
+/**
+ * Submit answer for an educational scenario
+ */
+export async function answerScenario(
+  id: number,
+  choice: "a" | "b"
+): Promise<ScenarioAnswerResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/scenarios/${id}/answer`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ choice }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Gagal mengirim jawaban skenario.");
   }
 
   return response.json();

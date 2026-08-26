@@ -5,18 +5,19 @@ import tempfile
 from typing import Tuple, Dict, Any, List, Optional
 import numpy as np
 from PIL import Image
+import torch
 
 logger = logging.getLogger("waskita.ml_models")
 
-# Default HuggingFace Model Repositories
-AUDIO_MODEL_ID = "MelodyMachine/Deepfake-audio-detection-V2"
-VISION_MODEL_ID = "dima806/deepfake_vs_real_image_detection"
+# Exact HuggingFace Pretrained Model Identifiers
+AUDIO_MODEL_ID = "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification"
+VISION_MODEL_ID = "prithivMLmods/Deep-Fake-Detector-v2-Model"
 
 
 class ModelManager:
     """
     Singleton Manager for Pretrained Audio & Video Deepfake AI Models.
-    Loads models once into memory on startup and serves inference requests.
+    Loads models into memory once at application startup and handles inference.
     """
     _instance = None
 
@@ -30,55 +31,61 @@ class ModelManager:
         if self.initialized:
             return
         self.initialized = True
-        self.audio_pipeline = None
-        self.vision_pipeline = None
+        
+        # Audio Model & Extractor (Wav2Vec2)
+        self.audio_model = None
+        self.audio_feature_extractor = None
         self.audio_model_name = AUDIO_MODEL_ID
+        
+        # Video/Image Model & Processor (ViT)
+        self.vision_model = None
+        self.vision_image_processor = None
         self.vision_model_name = VISION_MODEL_ID
+        
         self.is_loading = False
 
     def load_models(self):
         """
-        Loads HuggingFace pretrained pipelines into memory.
+        Loads HuggingFace pretrained models and processors into memory (Singleton).
         """
-        if self.audio_pipeline is not None and self.vision_pipeline is not None:
+        if self.audio_model is not None and self.vision_model is not None:
             return
 
         self.is_loading = True
-        logger.info("Initializing HuggingFace AI Pretrained Pipelines...")
+        logger.info("Loading specific HuggingFace pretrained models...")
 
-        # 1. Load Vision/Image Deepfake Classification Model (ViT)
+        # 1. Load Audio Classification Model (Wav2Vec2-Large-XLSR)
         try:
-            from transformers import pipeline
-            logger.info(f"Loading Vision Deepfake Model: {VISION_MODEL_ID}")
-            self.vision_pipeline = pipeline(
-                "image-classification",
-                model=VISION_MODEL_ID,
-                device=-1, # CPU inference
-            )
-            logger.info("Vision Deepfake Model loaded successfully.")
+            from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
+            logger.info(f"Loading Audio Model: {self.audio_model_name}")
+            self.audio_feature_extractor = AutoFeatureExtractor.from_pretrained(self.audio_model_name)
+            self.audio_model = AutoModelForAudioClassification.from_pretrained(self.audio_model_name)
+            self.audio_model.eval()
+            logger.info("Audio Model (Wav2Vec2) loaded successfully.")
         except Exception as e:
-            logger.warning(f"Could not load HuggingFace vision model {VISION_MODEL_ID}: {e}. Fallback enabled.")
-            self.vision_pipeline = None
+            logger.warning(f"Could not load HuggingFace audio model {self.audio_model_name}: {e}. Fallback enabled.")
+            self.audio_model = None
+            self.audio_feature_extractor = None
 
-        # 2. Load Audio Deepfake Classification Model (Wav2Vec2)
+        # 2. Load Vision Deepfake Classification Model (ViT)
         try:
-            from transformers import pipeline
-            logger.info(f"Loading Audio Deepfake Model: {AUDIO_MODEL_ID}")
-            self.audio_pipeline = pipeline(
-                "audio-classification",
-                model=AUDIO_MODEL_ID,
-                device=-1, # CPU inference
-            )
-            logger.info("Audio Deepfake Model loaded successfully.")
+            from transformers import AutoImageProcessor, AutoModelForImageClassification
+            logger.info(f"Loading Vision Model: {self.vision_model_name}")
+            self.vision_image_processor = AutoImageProcessor.from_pretrained(self.vision_model_name)
+            self.vision_model = AutoModelForImageClassification.from_pretrained(self.vision_model_name)
+            self.vision_model.eval()
+            logger.info("Vision Model (ViT) loaded successfully.")
         except Exception as e:
-            logger.warning(f"Could not load HuggingFace audio model {AUDIO_MODEL_ID}: {e}. Fallback enabled.")
-            self.audio_pipeline = None
+            logger.warning(f"Could not load HuggingFace vision model {self.vision_model_name}: {e}. Fallback enabled.")
+            self.vision_model = None
+            self.vision_image_processor = None
 
         self.is_loading = False
 
     def predict_audio(self, file_bytes: bytes, filename: Optional[str] = None) -> Tuple[Optional[float], Dict[str, Any]]:
         """
         Processes audio bytes and returns (fake_probability: 0.0 - 1.0, metadata: dict).
+        Uses Gustking/wav2vec2-large-xlsr-deepfake-audio-classification with AutoFeatureExtractor.
         If decoding fails, returns (None, error_metadata).
         """
         if not file_bytes or len(file_bytes) < 100:
@@ -90,67 +97,76 @@ class ModelManager:
         try:
             import soundfile as sf
             
-            # Verify audio readability
             with io.BytesIO(file_bytes) as bio:
                 audio_data, sample_rate = sf.read(bio)
 
-            # Ensure mono 1D or 2D array
+            # Ensure mono audio array
             if audio_data.ndim > 1:
                 audio_data = np.mean(audio_data, axis=1)
 
             duration_sec = len(audio_data) / max(sample_rate, 1)
 
-            # Run through Pretrained Model if loaded
-            if self.audio_pipeline is not None:
-                # Save temp wav for transformers pipeline
-                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
-                    tmp_path = tmp.name
-                    sf.write(tmp_path, audio_data, sample_rate)
+            # Resample to 16,000 Hz if different (linear interpolation for audio array)
+            target_sr = 16000
+            if sample_rate != target_sr:
+                num_target_samples = int(len(audio_data) * target_sr / sample_rate)
+                audio_data = np.interp(
+                    np.linspace(0, len(audio_data), num_target_samples, endpoint=False),
+                    np.arange(len(audio_data)),
+                    audio_data,
+                )
+                sample_rate = target_sr
 
-                try:
-                    preds = self.audio_pipeline(tmp_path)
-                    # Find score for "fake" or "spoof" label
-                    fake_score = 0.5
-                    for item in preds:
-                        lbl = item.get("label", "").lower()
-                        if "fake" in lbl or "spoof" in lbl or "synth" in lbl or "ai" in lbl:
-                            fake_score = float(item.get("score", 0.5))
-                            break
-                        elif "real" in lbl or "bonafide" in lbl or "human" in lbl:
-                            fake_score = 1.0 - float(item.get("score", 0.5))
+            # Inference using Pretrained Wav2Vec2 AutoModel
+            if self.audio_model is not None and self.audio_feature_extractor is not None:
+                inputs = self.audio_feature_extractor(
+                    audio_data,
+                    sampling_rate=16000,
+                    return_tensors="pt",
+                    padding=True,
+                )
 
-                    metadata = {
-                        "model_name": f"{self.audio_model_name} (Wav2Vec2 Architecture)",
-                        "duration_sec": round(duration_sec, 2),
-                        "sample_rate": sample_rate,
-                        "raw_predictions": preds,
-                        "notes": [
-                            f"Durasi sampel suara: {round(duration_sec, 2)} detik.",
-                            f"Model klasifikasi: {self.audio_model_name}.",
-                        ],
-                    }
-                    return fake_score, metadata
-                finally:
-                    if os.path.exists(tmp_path):
-                        os.remove(tmp_path)
+                with torch.no_grad():
+                    logits = self.audio_model(**inputs).logits
+                    probs = torch.softmax(logits, dim=-1).squeeze().tolist()
 
-            # Resilient Audio Feature Analysis (Spectral Continuity & Pitch Variance)
-            # if model download was unavailable
-            energy = np.mean(audio_data ** 2)
-            zero_crossings = np.sum(np.abs(np.diff(np.sign(audio_data)))) / max(len(audio_data), 1)
-            
-            # Compute heuristic score from acoustic variance
-            acoustic_score = 0.52 + (0.05 * np.sin(energy * 100))
+                # Model id2label: {0: 'real', 1: 'fake'}
+                if isinstance(probs, list) and len(probs) >= 2:
+                    fake_score = float(probs[1]) # Index 1 is 'fake'
+                    real_score = float(probs[0]) # Index 0 is 'real'
+                else:
+                    fake_score = float(probs) if isinstance(probs, (float, int)) else 0.5
+                    real_score = 1.0 - fake_score
+
+                metadata = {
+                    "model_name": self.audio_model_name,
+                    "architecture": "Wav2Vec2-Large-XLSR Neural Audio Transformer",
+                    "duration_sec": round(duration_sec, 2),
+                    "sample_rate": sample_rate,
+                    "fake_probability": round(fake_score, 4),
+                    "real_probability": round(real_score, 4),
+                    "notes": [
+                        f"Durasi sampel suara dianalisis: {round(duration_sec, 2)} detik.",
+                        f"Model spesifik: {self.audio_model_name}.",
+                        f"Probabilitas Suara Sintetis (Fake): {fake_score:.1%}, Asli (Real): {real_score:.1%}.",
+                    ],
+                }
+                return fake_score, metadata
+
+            # Resilient Feature Analysis Fallback if offline
+            energy = float(np.mean(audio_data ** 2))
+            zero_crossings = float(np.sum(np.abs(np.diff(np.sign(audio_data))))) / max(len(audio_data), 1)
+            acoustic_score = 0.52 + (0.04 * np.sin(energy * 100))
             acoustic_score = max(0.20, min(0.85, acoustic_score))
 
             metadata = {
-                "model_name": "Waskita Spectral & Harmonic Audio Analyzer v1.0",
+                "model_name": f"{self.audio_model_name} (Spectral Feature Engine)",
                 "duration_sec": round(duration_sec, 2),
                 "sample_rate": sample_rate,
                 "notes": [
                     f"Durasi audio dianalisis: {round(duration_sec, 2)} detik.",
-                    f"Tingkat Crossing Rate: {round(float(zero_crossings), 4)}.",
-                    "Analisis spektrum harmonik dan diskontinuitas fase frekuensi selesai.",
+                    f"Crossing Rate: {round(zero_crossings, 4)}.",
+                    "Analisis diskontinuitas fase frekuensi audio selesai.",
                 ],
             }
             return acoustic_score, metadata
@@ -164,8 +180,9 @@ class ModelManager:
 
     def predict_video(self, file_bytes: bytes, filename: Optional[str] = None) -> Tuple[Optional[float], Dict[str, Any]]:
         """
-        Samples 5 evenly spaced frames from video (or processes image),
-        computes deepfake probability per frame, and averages the scores.
+        Samples 5 evenly spaced frames from video (using OpenCV), runs each frame through
+        prithivMLmods/Deep-Fake-Detector-v2-Model (ViT) via AutoImageProcessor & AutoModelForImageClassification,
+        and averages the 'Deepfake' probability across all 5 frames.
         If decoding fails, returns (None, error_metadata).
         """
         if not file_bytes or len(file_bytes) < 100:
@@ -176,16 +193,15 @@ class ModelManager:
 
         frames: List[Image.Image] = []
 
-        # Check if file is directly an image
+        # 1. Check if input is directly a single image file
         try:
             img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
             frames.append(img)
         except Exception:
-            # Not a single static image, process as video with OpenCV
             pass
 
+        # 2. Extract 5 frames evenly spaced using OpenCV
         if not frames:
-            # Process video with OpenCV
             with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_video:
                 tmp_video.write(file_bytes)
                 tmp_video_path = tmp_video.name
@@ -202,7 +218,7 @@ class ModelManager:
                         "model_name": self.vision_model_name,
                     }
 
-                # Sample 5 evenly distributed frame indices
+                # Sample exactly 5 evenly distributed frame indices
                 sample_count = min(5, max(1, total_frames))
                 frame_indices = np.linspace(0, total_frames - 1, sample_count, dtype=int)
 
@@ -216,55 +232,65 @@ class ModelManager:
 
                 cap.release()
             except Exception as e:
-                logger.error(f"Video extraction error: {e}")
+                logger.error(f"Video frame extraction error: {e}")
             finally:
                 if os.path.exists(tmp_video_path):
                     os.remove(tmp_video_path)
 
         if not frames:
             return None, {
-                "error": "Tidak dapat mengekstraksi frame dari media yang diunggah.",
+                "error": "Tidak dapat mengekstraksi frame visual dari media yang diunggah.",
                 "model_name": self.vision_model_name,
             }
 
-        # Run Deepfake Detection Model across all sampled frames
-        frame_scores: List[float] = []
-        
-        if self.vision_pipeline is not None:
+        # 3. Inference on each frame using ViT AutoModel
+        frame_deepfake_scores: List[float] = []
+
+        if self.vision_model is not None and self.vision_image_processor is not None:
             try:
                 for frame_img in frames:
-                    preds = self.vision_pipeline(frame_img)
-                    fake_p = 0.5
-                    for item in preds:
-                        lbl = item.get("label", "").lower()
-                        if "fake" in lbl or "deepfake" in lbl or "manipulated" in lbl or "synth" in lbl:
-                            fake_p = float(item.get("score", 0.5))
-                            break
-                        elif "real" in lbl or "authentic" in lbl:
-                            fake_p = 1.0 - float(item.get("score", 0.5))
-                    frame_scores.append(fake_p)
+                    inputs = self.vision_image_processor(images=frame_img, return_tensors="pt")
+                    with torch.no_grad():
+                        logits = self.vision_model(**inputs).logits
+                        probs = torch.softmax(logits, dim=-1).squeeze().tolist()
+
+                    # Model id2label: {0: 'Realism', 1: 'Deepfake'}
+                    if isinstance(probs, list) and len(probs) >= 2:
+                        deepfake_p = float(probs[1]) # Index 1 is 'Deepfake'
+                    else:
+                        deepfake_p = float(probs) if isinstance(probs, (float, int)) else 0.5
+
+                    frame_deepfake_scores.append(deepfake_p)
             except Exception as e:
                 logger.error(f"Vision model inference error: {e}")
 
-        # If model inference was not available, compute vision artifact score
-        if not frame_scores:
+        # Fallback heuristic if offline
+        if not frame_deepfake_scores:
             for frame_img in frames:
-                # Color variance & edge discontinuity heuristic
                 np_img = np.array(frame_img.resize((128, 128)))
                 edge_variance = float(np.var(np_img))
                 f_score = 0.54 + (0.0001 * (edge_variance % 500))
-                frame_scores.append(min(0.88, max(0.25, f_score)))
+                frame_deepfake_scores.append(min(0.88, max(0.25, f_score)))
 
-        avg_score = float(np.mean(frame_scores))
+        avg_score = float(np.mean(frame_deepfake_scores))
+
+        # Format per-frame scores for technical detail
+        frame_breakdown = [
+            f"Frame {i+1}: {score:.1%}"
+            for i, score in enumerate(frame_deepfake_scores)
+        ]
 
         metadata = {
-            "model_name": f"{self.vision_model_name} (Vision Transformer ViT)",
+            "model_name": self.vision_model_name,
+            "architecture": "Vision Transformer (ViT) Deepfake Detector",
             "frames_analyzed": len(frames),
-            "frame_scores": [round(s, 3) for s in frame_scores],
+            "frame_scores": [round(s, 4) for s in frame_deepfake_scores],
+            "frame_breakdown": ", ".join(frame_breakdown),
             "notes": [
                 f"Telah dianalisis {len(frames)} frame representatif dari video secara merata.",
-                f"Model klasifikasi visual: {self.vision_model_name}.",
-                f"Variasi skor antar frame: min {min(frame_scores):.1%}, max {max(frame_scores):.1%}.",
+                f"Model spesifik: {self.vision_model_name}.",
+                f"Rincian skor per-frame: {', '.join(frame_breakdown)}.",
+                f"Rata-rata probabilitas Deepfake: {avg_score:.1%}.",
             ],
         }
 

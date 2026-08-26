@@ -1,0 +1,7 @@
+[tool.pyrefly]
+venv = ".venv"
+python = ".venv/Scripts/python.exe"
+search_paths = [
+    ".",
+    ".venv/Lib/site-packages"
+]

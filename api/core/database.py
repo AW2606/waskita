@@ -1,5 +1,5 @@
 import logging
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text, inspect
 from sqlalchemy.orm import sessionmaker, DeclarativeBase
 from api.core.config import settings
 
@@ -43,5 +43,18 @@ def get_db():
 
 
 def init_db():
-    """Create tables if they don't exist."""
+    """Create tables and apply schema updates if needed."""
     Base.metadata.create_all(bind=engine)
+    
+    # Safe schema migration for users.password_hash
+    try:
+        with engine.connect() as conn:
+            inspector = inspect(engine)
+            if "users" in inspector.get_table_names():
+                columns = [c["name"] for c in inspector.get_columns("users")]
+                if "password_hash" not in columns:
+                    logger.info("Migrating schema: Adding password_hash to users table...")
+                    conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) DEFAULT ''"))
+                    conn.commit()
+    except Exception as e:
+        logger.warning(f"Schema migration notice: {e}")

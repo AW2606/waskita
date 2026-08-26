@@ -3,11 +3,13 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Menu, X, ShieldCheck } from "lucide-react";
+import { useSession, signOut } from "next-auth/react";
+import { Menu, X, LogIn, LogOut, User } from "lucide-react";
 
 export function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
   const pathname = usePathname();
+  const { data: session, status } = useSession();
 
   const navLinks = [
     { name: "Beranda", href: "/" },
@@ -58,6 +60,39 @@ export function Navbar() {
           })}
         </nav>
 
+        {/* Desktop Auth Section */}
+        <div className="hidden md:flex items-center gap-3">
+          {status === "authenticated" && session?.user ? (
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-white border border-muted/20 shadow-2xs">
+                <div className="w-6 h-6 rounded-lg bg-primary/10 text-primary flex items-center justify-center font-mono text-xs font-bold">
+                  {session.user.name ? session.user.name[0].toUpperCase() : "U"}
+                </div>
+                <span className="font-body text-sm font-medium text-ink max-w-[120px] truncate">
+                  {session.user.name || session.user.email}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => signOut({ callbackUrl: "/" })}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-body text-muted hover:text-ink hover:bg-muted/15 transition-all cursor-pointer"
+                title="Keluar dari akun"
+              >
+                <LogOut className="w-4 h-4" />
+                <span>Keluar</span>
+              </button>
+            </div>
+          ) : (
+            <Link
+              href="/login"
+              className="inline-flex items-center gap-2 bg-primary hover:bg-primary/90 text-white font-body font-medium text-sm px-5 py-2.5 rounded-xl shadow-xs transition-all cursor-pointer"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>Masuk</span>
+            </Link>
+          )}
+        </div>
+
         {/* Mobile Hamburger Button */}
         <button
           onClick={() => setIsOpen(!isOpen)}
@@ -70,7 +105,7 @@ export function Navbar() {
 
       {/* Mobile Menu Dropdown */}
       {isOpen && (
-        <div className="md:hidden bg-white border-b border-muted/20 px-6 py-4 space-y-2 shadow-lg animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="md:hidden bg-white border-b border-muted/20 px-6 py-4 space-y-3 shadow-lg animate-in fade-in slide-in-from-top-2 duration-200">
           {navLinks.map((link) => {
             const active = isActive(link.href);
             return (
@@ -88,6 +123,37 @@ export function Navbar() {
               </Link>
             );
           })}
+
+          <div className="pt-2 border-t border-muted/20">
+            {status === "authenticated" && session?.user ? (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 px-3 py-2 text-sm font-body text-muted">
+                  <User className="w-4 h-4 text-primary" />
+                  <span className="truncate">{session.user.name || session.user.email}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsOpen(false);
+                    signOut({ callbackUrl: "/" });
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-body bg-mist text-ink hover:bg-muted/20 transition-all cursor-pointer"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>Keluar dari Akun</span>
+                </button>
+              </div>
+            ) : (
+              <Link
+                href="/login"
+                onClick={() => setIsOpen(false)}
+                className="w-full inline-flex items-center justify-center gap-2 bg-primary text-white font-body font-medium text-base px-4 py-3 rounded-xl shadow-xs"
+              >
+                <LogIn className="w-4 h-4" />
+                <span>Masuk ke Akun</span>
+              </Link>
+            )}
+          </div>
         </div>
       )}
     </header>

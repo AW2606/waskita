@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import {
   Mic,
   Video,
@@ -13,6 +15,8 @@ import {
   ArrowRight,
   ShieldCheck,
   Loader2,
+  Lock,
+  LogIn,
 } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
@@ -22,11 +26,14 @@ type ContentType = "suara" | "video" | "pesan" | "telepon";
 
 export default function VerifikasiPage() {
   const router = useRouter();
+  const { data: session, status } = useSession();
   const [selectedType, setSelectedType] = useState<ContentType>("suara");
   const [inputText, setInputText] = useState("");
   const [dummyFileName, setDummyFileName] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const token = (session as unknown as { accessToken?: string })?.accessToken;
 
   const contentTypes = [
     {
@@ -67,6 +74,12 @@ export default function VerifikasiPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (status === "unauthenticated" || !token) {
+      router.push("/login");
+      return;
+    }
+
     setIsLoading(true);
     setErrorMessage(null);
 
@@ -82,14 +95,12 @@ export default function VerifikasiPage() {
         formData.append("file", fakeFile, dummyFileName || "sample_media_record.mp3");
       }
 
-      const result = await verifyContent(formData);
-      // Navigate to processing screen with real verification ID
+      const result = await verifyContent(formData, token);
       router.push(`/verifikasi/proses?id=${result.id}`);
     } catch (err: unknown) {
       console.error("Verification submit error:", err);
-      // Fallback in case of network issue so flow remains accessible
-      const fallbackId = `wsk_${Date.now().toString(36)}`;
-      router.push(`/verifikasi/proses?id=${fallbackId}`);
+      const msg = err instanceof Error ? err.message : "Gagal memproses verifikasi.";
+      setErrorMessage(msg);
     } finally {
       setIsLoading(false);
     }
@@ -121,6 +132,32 @@ export default function VerifikasiPage() {
             Pilih salah satu format konten di bawah untuk memulai verifikasi cepat dengan aman.
           </p>
         </div>
+
+        {/* Unauthenticated Notification Banner */}
+        {status === "unauthenticated" && (
+          <div className="bg-white p-6 sm:p-7 rounded-2xl border border-muted/20 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-3 text-center sm:text-left">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                <Lock className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-display font-semibold text-base text-ink">
+                  Masuk untuk Menyimpan Riwayat
+                </h3>
+                <p className="font-body text-xs sm:text-sm text-muted">
+                  Hasil verifikasi akan terikat secara privat ke akun Anda dan file media langsung dihapus permanen.
+                </p>
+              </div>
+            </div>
+            <Link
+              href="/login"
+              className="inline-flex items-center gap-2 bg-primary hover:bg-primary/90 text-white font-body font-medium text-sm px-5 py-2.5 rounded-xl shadow-xs transition-all shrink-0"
+            >
+              <LogIn className="w-4 h-4" />
+              <span>Masuk Akun</span>
+            </Link>
+          </div>
+        )}
 
         {/* 4 Cards Grid (2x2 Desktop, 1 Col Mobile) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
@@ -177,7 +214,7 @@ export default function VerifikasiPage() {
             <h2 className="font-display font-semibold text-xl text-ink">
               Unggah / Masukkan Data: {activeContent.title}
             </h2>
-            <span className="font-mono text-xs text-muted">Privasi Dijamin</span>
+            <span className="font-mono text-xs text-muted">Zero-Retention Policy</span>
           </div>
 
           {errorMessage && (
@@ -248,7 +285,7 @@ export default function VerifikasiPage() {
                 />
               )}
               <p className="font-body text-xs text-muted">
-                Kerahasiaan data Anda terlindungi. Seluruh data dienkripsi dan diproses di server verifikasi aman.
+                File media mentah tidak disimpan permanen di server dan langsung dihapus setelah analisis selesai.
               </p>
             </div>
           )}
@@ -263,7 +300,7 @@ export default function VerifikasiPage() {
               {isLoading ? (
                 <>
                   <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Menghubungi Server...</span>
+                  <span>Memproses Analisis...</span>
                 </>
               ) : (
                 <>

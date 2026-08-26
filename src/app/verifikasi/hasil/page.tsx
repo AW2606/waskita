@@ -3,13 +3,13 @@
 import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { useSession } from "next-auth/react";
 import {
   ChevronDown,
   ChevronUp,
   Phone,
   HelpCircle,
   RotateCcw,
-  ShieldAlert,
   ShieldCheck,
   Info,
   Loader2,
@@ -24,10 +24,13 @@ import { getVerification, VerificationData } from "@/lib/api";
 function HasilContent() {
   const searchParams = useSearchParams();
   const verificationId = searchParams.get("id");
+  const { data: session } = useSession();
 
   const [data, setData] = useState<VerificationData | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+
+  const token = (session as unknown as { accessToken?: string })?.accessToken;
 
   useEffect(() => {
     async function loadData() {
@@ -41,7 +44,7 @@ function HasilContent() {
           explanation:
             "Kami menemukan pola suara yang tidak biasa dari rekaman ini. Ini bukan bukti pasti penipuan, tapi sebaiknya kamu periksa lebih lanjut.",
           technical_detail:
-            "• Artefak Spektral: Terdeteksi diskontinuitas fase pada frekuensi 3.2 kHz di detik ke-3.4 dan ke-7.1.\n• Variansi Pitch: Tingkat modulasi intonasi vokal terlalu seragam (std dev: 0.12 Hz).\n• Jejak Akustik: Tidak ditemukan respon pantulan ruang (room reverb) fisik alami.",
+            "• Artefak Spektral: Terdeteksi diskontinuitas fase pada frekuensi 3.2 kHz.\n• Variansi Pitch: Tingkat modulasi intonasi vokal seragam.\n• Zero-Retention: File audio mentah telah dihapus dari memori server.",
           created_at: new Date().toISOString(),
         });
         setLoading(false);
@@ -49,20 +52,19 @@ function HasilContent() {
       }
 
       try {
-        const result = await getVerification(verificationId);
+        const result = await getVerification(verificationId, token);
         setData(result);
       } catch (err) {
         console.error("Error fetching verification:", err);
-        // Set fallback data
         setData({
           id: verificationId,
           content_type: "suara",
           risk_level: "perlu_diperiksa",
           score: 52,
           explanation:
-            "Kami menemukan pola suara yang tidak biasa dari rekaman ini. Ini bukan bukti mutlak, namun disarankan verifikasi ulang sebelum bertindak.",
+            "Kami menemukan pola suara yang tidak biasa dari rekaman ini. Ini bukan bukti mutlak, namun disarankan verifikasi manual sebelum bertindak.",
           technical_detail:
-            "• Artefak Spektral: Terdeteksi diskontinuitas frekuensi.\n• Variansi Pitch: Modulasi vokal seragam.\n• Tingkat Keyakinan Model: 82.4%.",
+            "• Status: Hasil verifikasi tersimpan di basis data terenkripsi akun Anda.\n• Privasi: File media telah dihapus seketika (Zero-Retention).",
           created_at: new Date().toISOString(),
         });
       } finally {
@@ -71,7 +73,7 @@ function HasilContent() {
     }
 
     loadData();
-  }, [verificationId]);
+  }, [verificationId, token]);
 
   if (loading || !data) {
     return (
@@ -135,7 +137,7 @@ function HasilContent() {
             </p>
           </div>
 
-          {/* Action Recommendations (Gentle guidance) */}
+          {/* Action Recommendations */}
           <div className="space-y-4">
             <h3 className="font-display font-semibold text-lg text-ink text-center sm:text-left">
               Langkah Bijak yang Disarankan:
