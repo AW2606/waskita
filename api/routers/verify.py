@@ -1,4 +1,3 @@
-import random
 import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
@@ -6,57 +5,11 @@ from sqlalchemy.orm import Session
 from api.core.database import get_db
 from api.models.verification import Verification
 from api.schemas.verification import VerificationResponse
+from api.services.ml_models import get_model_manager
+from api.services.heuristic_scanner import scan_text, scan_phone
+from api.services.risk_translator import translate_risk
 
 router = APIRouter(prefix="/api/verify", tags=["Verifikasi"])
-
-
-def generate_simulation_result(content_type: str, text_content: Optional[str] = None, filename: Optional[str] = None):
-    """
-    Simulates AI detection logic and returns appropriate risk level, score, explanation, and technical details.
-    """
-    # Random selection with realistic distribution
-    risk_options = [
-        ("perlu_diperiksa", 52),
-        ("tenang", 22),
-        ("sangat_waspada", 86),
-        ("perlu_diperiksa", 56),
-    ]
-    chosen_risk, base_score = random.choice(risk_options)
-    score = base_score + random.randint(-4, 4)
-    score = max(5, min(95, score))
-
-    if chosen_risk == "tenang":
-        explanation = (
-            "Hasil analisis menunjukkan pola media berada dalam batas wajar dan alami. "
-            "Tidak ditemukan indikasi manipulasi sintetis AI atau anomali mencurigakan."
-        )
-        technical_detail = (
-            "• Karakteristik Alami: Terdeteksi desah napas organik dan dinamika intonasi natural.\n"
-            "• Spektrum Frekuensi: Distribusi harmonik stabil tanpa distorsi kompresi neural.\n"
-            "• Tingkat Keaslian (Confidence): 94.8% terverifikasi alami."
-        )
-    elif chosen_risk == "perlu_diperiksa":
-        explanation = (
-            "Kami menemukan pola yang tidak biasa dari data ini (menyerupai sintesis AI). "
-            "Ini bukan bukti mutlak penipuan, namun kami menyarankan Anda memverifikasi lebih lanjut dengan pihak terkait."
-        )
-        technical_detail = (
-            "• Artefak Spektral: Terdeteksi diskontinuitas fase frekuensi pada rentang 3.2 kHz - 4.5 kHz.\n"
-            "• Variansi Pitch: Tingkat modulasi intonasi terlampau seragam (std dev: 0.12 Hz).\n"
-            "• Rekayasa Akustik: Tidak ditemukan respon pantulan ruang (room reverb) fisik alami."
-        )
-    else:  # sangat_waspada
-        explanation = (
-            "Indikasi manipulasi sintesis AI atau pola rekayasa sosial terdeteksi sangat kuat. "
-            "Sangat disarankan untuk tidak melanjutkan transfer dana atau memberikan data pribadi."
-        )
-        technical_detail = (
-            "• Model Neural Vocoder: Terdeteksi sidik jari generator kloning suara (probabilitas 89.7%).\n"
-            "• Pola Urgensi: Analisis semantik teks mendeteksi pola intimidasi/urgensi waktu buatan.\n"
-            "• Jejak Kompresi: File tidak memiliki jejak kompresi mikrofon fisik telepon umum."
-        )
-
-    return chosen_risk, score, explanation, technical_detail
 
 
 @router.post("", response_model=VerificationResponse, status_code=status.HTTP_201_CREATED)
@@ -67,25 +20,109 @@ async def create_verification(
     db: Session = Depends(get_db),
 ):
     """
-    Submit content for AI verification analysis.
-    Supports file uploads (audio/video) or text inputs (messages/phone numbers).
+    Submits content for real AI and Heuristic verification analysis.
+    - Track 1: Audio and Video via Pretrained HuggingFace Models
+    - Track 2: Text Chat and Phone Numbers via Indonesian Heuristic & Registry Scanner
+    All results are normalized through the centralized risk_translator.
     """
-    filename = file.filename if file else None
-    risk_level, score, explanation, technical_detail = generate_simulation_result(
-        content_type=content_type,
-        text_content=text_content,
-        filename=filename,
-    )
+    clean_type = content_type.lower().strip()
+    file_bytes = None
+    filename = None
 
+    if file is not None:
+        filename = file.filename
+        file_bytes = await file.read()
+
+    model_mgr = get_model_manager()
+
+    # -------------------------------------------------------------------------
+    # Track 1: Audio / Voice Verification (Wav2Vec2 Deepfake AI Model)
+    # -------------------------------------------------------------------------
+    if clean_type in ["suara", "audio"]:
+        if not file_bytes and text_content:
+            # Fallback if submitted as text simulation
+            raw_score, meta = scan_text(text_content)
+            result = translate_risk(raw_score, "audio", meta)
+        else:
+            raw_score, meta = model_mgr.predict_audio(file_bytes, filename)
+            if raw_score is None:
+                # Honest fallback error response
+                result = {
+                    "risk_level": "perlu_diperiksa",
+                    "score": 50,
+                    "explanation": (
+                        "Kami tidak dapat memeriksa rekaman suara ini dengan yakin karena format atau kualitas audio "
+                        "tidak terbaca secara optimal. Sebaiknya lakukan verifikasi manual langsung dengan pihak terkait "
+                        "melalui saluran komunikasi resmi."
+                    ),
+                    "technical_detail": (
+                        "• Status: Gagal memproses file audio.\n"
+                        f"• Keterangan Sistem: {meta.get('error', 'Format tidak didukung.')}\n"
+                        "• Rekomendasi: Gunakan rekaman berformat .mp3, .wav, atau .m4a dengan durasi minimal 1 detik."
+                    ),
+                }
+            else:
+                result = translate_risk(raw_score, "audio", meta)
+
+    # -------------------------------------------------------------------------
+    # Track 1: Video Verification (Vision Transformer ViT 5-Frame Sampled AI Model)
+    # -------------------------------------------------------------------------
+    elif clean_type in ["video"]:
+        if not file_bytes and text_content:
+            raw_score, meta = scan_text(text_content)
+            result = translate_risk(raw_score, "video", meta)
+        else:
+            raw_score, meta = model_mgr.predict_video(file_bytes, filename)
+            if raw_score is None:
+                # Honest fallback error response
+                result = {
+                    "risk_level": "perlu_diperiksa",
+                    "score": 50,
+                    "explanation": (
+                        "Kami tidak dapat mengekstraksi dan memeriksa frame video ini dengan yakin. "
+                        "Format media mungkin mengalami gangguan atau kompresi berlebih. "
+                        "Sebaiknya lakukan verifikasi manual langsung dengan pihak yang bersangkutan."
+                    ),
+                    "technical_detail": (
+                        "• Status: Gagal memproses frame video.\n"
+                        f"• Keterangan Sistem: {meta.get('error', 'Format video tidak terbaca.')}\n"
+                        "• Rekomendasi: Unggah file video .mp4 atau .mov dengan orientasi visual jelas."
+                    ),
+                }
+            else:
+                result = translate_risk(raw_score, "video", meta)
+
+    # -------------------------------------------------------------------------
+    # Track 2: Text / Chat Message Verification (Indonesian Heuristic Scanner)
+    # -------------------------------------------------------------------------
+    elif clean_type in ["pesan", "text"]:
+        text_to_scan = text_content or (file_bytes.decode("utf-8", errors="ignore") if file_bytes else "")
+        raw_score, meta = scan_text(text_to_scan)
+        result = translate_risk(raw_score, "pesan", meta)
+
+    # -------------------------------------------------------------------------
+    # Track 2: Phone Number Verification (Reported Numbers Registry)
+    # -------------------------------------------------------------------------
+    elif clean_type in ["telepon", "phone_number"]:
+        phone_to_scan = text_content or (file_bytes.decode("utf-8", errors="ignore") if file_bytes else "")
+        raw_score, meta = scan_phone(phone_to_scan, db)
+        result = translate_risk(raw_score, "telepon", meta)
+
+    else:
+        # Generic fallback
+        raw_score, meta = scan_text(text_content or "")
+        result = translate_risk(raw_score, "pesan", meta)
+
+    # Persist in Database
     verification_id = f"wsk_{uuid.uuid4().hex[:8]}"
 
     new_verification = Verification(
         id=verification_id,
-        content_type=content_type,
-        risk_level=risk_level,
-        score=score,
-        explanation=explanation,
-        technical_detail=technical_detail,
+        content_type=clean_type,
+        risk_level=result["risk_level"],
+        score=result["score"],
+        explanation=result["explanation"],
+        technical_detail=result["technical_detail"],
     )
 
     db.add(new_verification)
