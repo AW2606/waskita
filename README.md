@@ -1,208 +1,133 @@
 # Waskita — Platform Verifikasi Konten AI & Deepfake
 
 <p align="center">
-  <strong>Melindungi Kelompok Rentan dari Ancaman Penipuan Digital Berbasis AI & Deepfake</strong>
+  <strong>Instrumen Literasi & Penapisan Awal Perlindungan Digital Berbasis AI & Forensik Akustik di Indonesia</strong>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Frontend-Next.js%2016%20(App%20Router)-2F6F62?style=flat-square" alt="Next.js" />
   <img src="https://img.shields.io/badge/Backend-FastAPI%20(Python)-10322C?style=flat-square" alt="FastAPI" />
-  <img src="https://img.shields.io/badge/AI_Audio-Wav2Vec2-D9A441?style=flat-square" alt="Wav2Vec2" />
+  <img src="https://img.shields.io/badge/AI_Audio-Wav2Vec2_%26_Whisper-D9A441?style=flat-square" alt="Wav2Vec2" />
   <img src="https://img.shields.io/badge/AI_Vision-Vision_Transformer_(ViT)-2F6F62?style=flat-square" alt="ViT" />
   <img src="https://img.shields.io/badge/Database-PostgreSQL_%2F_SQLite-blue?style=flat-square" alt="Database" />
-  <img src="https://img.shields.io/badge/Cache-Redis_7-C98A3B?style=flat-square" alt="Redis" />
+  <img src="https://img.shields.io/badge/Status-Fungsional_untuk_Demonstrasi-green?style=flat-square" alt="Status" />
 </p>
 
 ---
 
 ## 🌟 Tentang Waskita
 
-**Waskita** adalah platform verifikasi konten multi-jalur (*multi-modal AI verification*) yang dirancang khusus untuk melindungi masyarakat dan kelompok rentan (seperti lansia dan keluarga) dari jeratan kejahatan digital modern: kloning suara (*voice spoofing*), manipulasi video (*deepfake*), pesan rekayasa sosial bertekanan waktu, dan nomor telepon penipuan.
+**Waskita** adalah platform penapisan awal multi-modalitas (*early triage & educational verification*) yang dirancang untuk membantu masyarakat dan kelompok rentan mengenali indikasi penipuan siber modern: kloning suara (*voice spoofing*), manipulasi video (*deepfake*), pesan rekayasa sosial bertekanan waktu (*social engineering*), serta tautan phishing perbankan.
 
-Proyek ini dibangun dengan arsitektur **Unified Full-Stack Workspace**, menyatukan frontend Next.js dan backend FastAPI dalam satu root repositori sehingga seluruh layanan dapat dijalankan dengan satu perintah tunggal.
-
----
-
-## 🗄️ Status & Cara Kerja Database (Dual-Engine System)
-
-Aplikasi Waskita dilengkapi mekanisme **Dual-Engine Database** yang cerdas dan tangguh (*fault-tolerant*):
-
-1. **Mode Lokal Otomatis (SQLite — `waskita_dev.db`) [Aktif Default]**:
-   - Jika Anda menjalankan aplikasi tanpa Docker, backend otomatis membuat dan menggunakan database lokal **`waskita_dev.db`**.
-   - *Zero-configuration*: Anda tidak perlu menginstal software database tambahan untuk langsung mencoba dan mengembangkan aplikasi.
-   - Menyimpan tabel: `users`, `verifications`, `family_links`, `reported_numbers`, dan `scenarios`.
-
-2. **Mode Production (PostgreSQL 16 & Redis 7)**:
-   - Dijalankan melalui container Docker:
-     ```bash
-     docker compose up -d
-     ```
-   - Menyediakan skalabilitas tinggi dan isolasi database skala industri.
+Aplikasi ini dibangun dengan arsitektur **Unified Full-Stack Workspace**, mengintegrasikan frontend Next.js 16 dan backend FastAPI (Python 3.13) yang dapat dijalankan bersamaan dengan satu perintah.
 
 ---
 
-## 🔒 Kebijakan Retensi Data Sensitif (*Zero Permanent Media Storage*)
+## 🔒 Kebijakan Privasi & Keamanan Data Tunggal
 
-Privasi pengguna dan keamanan data keluarga adalah prioritas utama Waskita:
+Privasi pengguna dan keamanan data keluarga dikelola dengan standar kepatuhan UU PDP No. 27/2022:
 
-1. **Pemrosesan Sementara di Memori (*In-Memory / Temp Processing*)**: File rekaman suara atau video yang diunggah pengguna hanya ditempatkan pada memori sementara (*temporary buffer*) selama siklus inferensi model AI berlangsung.
-2. **Pembersihan Seketika (*Instant Purge*)**: Segera setelah proses analisis selesai (baik berhasil maupun gagal), file media mentah **langsung dihapus secara permanen dari memori dan disk server** melalui blok `finally`.
-3. **Hanya Metadata yang Disimpan**: Database **hanya menyimpan teks hasil temuan, skor risiko, dan penjelasan awam**, bukan file rekaman audio atau video aslinya.
+1. **Pemrosesan Media Tanpa Retensi (*Zero-Retention Policy*)**:
+   - File rekaman suara dan video yang diunggah pengguna diproses secara *ephemeral* di memori RAM server selama inferensi.
+   - Segera setelah proses analisis selesai, file media mentah **seketika dimusnahkan secara permanen dari server** melalui blok `finally`. Tidak ada salinan file media yang disimpan ke disk atau database.
+2. **Kata Sandi Rahasia Keluarga Terenkripsi (*Bcrypt Server-Side Hashing*)**:
+   - *Safe Word* (Kata Sandi Aman Utama) dan *Duress Code* (Kode Darurat Sandera) di-hash satu arah menggunakan algoritma **bcrypt** di backend sebelum disimpan ke basis data.
+   - Kode rahasia **tidak pernah disimpan dalam bentuk teks biasa di server** dan **tidak pernah disimpan di `localStorage` / `sessionStorage` peramban**.
+   - Endpoint verifikasi hanya mengembalikan status kecocokan (*boolean `true/false`*), tanpa pernah mengekspos kata sandi aslinya ke antarmuka pengguna (*Zero-Leakage Design*).
+3. **Batasan Mode Offline (*Privacy-Guarded Fallback*)**:
+   - Mode analisis lokal di sisi klien **dibatasi secara ketat hanya untuk fitur non-sensitif** (pemindaian kata kunci teks publik dan pola domain phishing) yang berjalan murni di memori tanpa menyimpan data pribadi.
+   - Fitur yang menyentuh data pribadi/rahasia (Kata Sandi Keluarga, Duress Code, riwayat akun, dan daftar anggota keluarga) **wajib terhubung ke server backend**. Jika server tidak dapat diakses, sistem menampilkan pemberitahuan transparan bahwa koneksi diperlukan guna menjaga keamanan data pengguna.
 
 ---
 
 ## 🧠 Arsitektur & Model AI yang Digunakan
 
-Waskita menerapkan pendekatan multi-jalur (*multi-modal verification pipeline*) yang memadukan **Deep Learning Pretrained Models** dan **Heuristik NLP Bahasa Indonesia**:
+Waskita memadukan model pembelajaran mendalam (*deep learning*) dan analisis forensik sinyal:
 
-### 1. Jalur Audio (Voice Spoofing & AI Speech Classification)
-- **Model Pretrained**: [`Gustking/wav2vec2-large-xlsr-deepfake-audio-classification`](https://huggingface.co/Gustking/wav2vec2-large-xlsr-deepfake-audio-classification)
-- **Arsitektur**: **Wav2Vec2-Large-XLSR Neural Audio Transformer**
-- **Library**: `transformers.AutoModelForAudioClassification`, `transformers.AutoFeatureExtractor`, `torch`
-- **Metode**: Audio di-decode dan di-resample ke format **16kHz mono**, diekstraksi representasi akustiknya, dan diklasifikasikan probabilitas sintesis suara AI (`fake`) vs ucapan manusia alami (`real`).
-- **Singleton Memory**: Dimuat sekali ke memori saat startup aplikasi (*ModelManager Singleton*) untuk latensi instan.
+### 1. Jalur Audio & Vokal (Voice Cloning & Acoustic Forensics)
+- **Speech-to-Text**: [`openai/whisper-tiny`](https://huggingface.co/openai/whisper-tiny) untuk transkripsi ucapan bahasa Indonesia secara lokal.
+- **Model Akustik**: [`Gustking/wav2vec2-large-xlsr-deepfake-audio-classification`](https://huggingface.co/Gustking/wav2vec2-large-xlsr-deepfake-audio-classification).
+- **Physical Forensic Features**:
+  - *Pitch Micro-Jitter*: Mengukur perturbasi frekuensi dasar F0 vokal.
+  - *Silence Noise-Gate Analysis*: Mendeteksi jeda hening tanpa *ambient room noise*.
+  - *Spectral Rolloff & Centroid*: Memeriksa batas frekuensi kompresi *neural vocoder*.
+- **Intent-Gated Discourse Classifier**: Membedakan narasi informasi/edukasi pihak ketiga dari instruksi serangan imperatif langsung guna mencegah alarm palsu (*false positive*).
 
-### 2. Jalur Video (Visual Deepfake & Face Synthesis Detection)
-- **Model Pretrained**: [`prithivMLmods/Deep-Fake-Detector-v2-Model`](https://huggingface.co/prithivMLmods/Deep-Fake-Detector-v2-Model)
-- **Arsitektur**: **Vision Transformer (ViT / ViTForImageClassification)**
-- **Library**: `transformers.AutoModelForImageClassification`, `transformers.AutoImageProcessor`, `opencv-python-headless`, `PIL`
-- **Metode**: Menggunakan OpenCV untuk mengekstraksi **5 frame sampel representatif** yang tersebar merata (*uniform temporal sampling*). Setiap frame dinilai probabilitas deepfake-nya dan dirata-ratakan (*ensemble average*), dengan rincian skor per-frame disimpan untuk transparansi.
+### 2. Jalur Video & Citra (Visual Deepfake Detection)
+- **Model Pretrained**: [`prithivMLmods/Deep-Fake-Detector-v2-Model`](https://huggingface.co/prithivMLmods/Deep-Fake-Detector-v2-Model) (Vision Transformer / ViT).
+- **Metode**: *Uniform temporal sampling* (5 frame representatif via OpenCV) dipadukan dengan analisis kompresi berulang (*macroblocking degradation*).
 
-### 3. Jalur Teks Chat (Indonesian Social Engineering Heuristic)
-- **Modul**: `api/services/heuristic_scanner.py`
-- **Metode**: Analisis berbasis aturan NLP bahasa Indonesia dengan **5 klaster pola risiko tinggi**:
-  1. *Urgensi Tinggi / Tekanan Waktu* (contoh: "transfer sekarang", "dalam 15 menit", "darurat", "jangan tunda")
-  2. *Kerahasiaan Palsu* (contoh: "jangan bilang siapa-siapa", "rahasia antara kita", "jangan telepon balik")
-  3. *Kredensial & Akses Rahasia* (contoh: "kode OTP", "kode verifikasi", "PIN", "password", "CVV")
-  4. *Otoritas Palsu & Ancaman Hukum* (contoh: "polisi", "kejaksaan", "kasus narkoba", "blokir rekening")
-  5. *Iming-iming Finansial* (contoh: "menang undian", "dana talangan", "komisi kilat", "uang kas kantor")
+### 3. Jalur Teks Chat & Tautan Phishing
+- **Heuristik NLP Bahasa Indonesia**: Pemetaan singkatan gaul siber (`"trfd skrg"`, `"tf bsk"`, `"jgn ksh tau"`) dan klasifikasi 6 klaster modus rekayasa sosial.
+- **Phishing URL Scanner**: Deteksi pemendek tautan (*shortlinks*) dan domain *typosquatting* peniru perbankan/layanan publik.
 
-### 4. Jalur Nomor Telepon (Community Fraud Registry)
-- **Basis Data**: Tabel `reported_numbers`
-- **Metode**: Normalisasi format nomor internasional dan lokal (`+62...` / `08...`) serta pencocokan riwayat laporan modus penipuan dan pencatutan nama.
-
-### 5. Modul Penerjemah Risiko Terpusat (`risk_translator.py`)
-Seluruh skor probabilitas mentah (0.0 – 1.0) dipetakan secara terpusat:
-- **Tenang** (`< 0.40`) : Pola wajar dan alami.
-- **Perlu Diperiksa** (`0.40 – 0.70`) : Terdeteksi anomali atau desakan yang meragukan.
-- **Sangat Perlu Waspada** (`> 0.70`) : Indikasi kuat rekayasa AI atau penipuan aktif.
-- **Prinsip Empati**: Penjelasan bahasa Indonesia awam yang ramah dan **selalu menyertakan disclaimer bahwa hasil merupakan penilaian komputasi awal dan bukan bukti mutlak**, serta menyarankan verifikasi manual.
+### 4. Pencocokan Sidik Jari Komunitas (SHA-256 Exact Match)
+- Mendeteksi apakah file yang persis sama pernah diperiksa sebelumnya melalui pencocokan hash SHA-256, mengurangi komputasi berulang untuk file identik (*byte-for-byte exact match*). Mekanisme ini tidak ditujukan untuk menangkap varian yang telah dikompresi ulang oleh aplikasi pihak ketiga.
 
 ---
 
-## 🔐 Autentikasi & Isolasi Data Multi-Tenant
+## 📊 Hasil Pengujian Empiris & Keterbatasan Model
 
-- **NextAuth + FastAPI Auth**: Autentikasi credentials menggunakan hashing **`bcrypt`** dan sesi bertanda tangan **JWT (JSON Web Token)**.
-- **Isolasi Data Per-User**: Data anggota keluarga (`family_links`) dan riwayat verifikasi (`verifications`) terisolasi 100% per akun pengguna. Pengguna lain tidak dapat melihat atau mengakses data akun lain (`403 Forbidden`).
+> **Catatan Transparansi & Responsible AI:**  
+> Seluruh model dan ambang batas yang digunakan dalam Waskita dikalibrasi berdasarkan pengujian awal terhadap sampel uji terbatas. Sistem ini dirancang sebagai instrumen edukasi dan penapisan awal (*triage support*), bukan sebagai alat pembuktian forensik hukum mutlak.
+
+### Ringkasan Hasil Pengujian Terbatas:
+1. **Pengujian Sampel Audio (10 Sampel Baseline + 2 Sampel Uji Menantang)**:
+   - Pada pengujian terhadap sampel AI Neural TTS berbahasa Indonesia (Edge-TTS *ArdiNeural* & *GadisNeural*), sistem berhasil mengidentifikasi **5 dari 5 (100%)** sampel AI sebagai suara sintetik dengan keyakinan 96.0%.
+   - Pada 5 sampel suara vokal manusia alami standar, sistem berhasil mengidentifikasi **5 dari 5 (100%)** sebagai suara manusia asli.
+   - Akurasi keseluruhan pada 10 sampel baseline mencapai **10 dari 10 (100.0%)**, dan pada 12 sampel (termasuk sampel menantang jeda artifisial dan filter kompresi telepon) mencapai **10 dari 12 (83.3%)**.
+2. **Pengujian Sampel Gambar (8 Sampel: 4 AI-Generated/Deepfake & 4 Foto Asli)**:
+   - Model Vision Transformer berhasil mendeteksi **4 dari 4 (100%)** sampel manipulasi AI pada pengujian awal.
+   - Total akurasi awal pada 8 sampel uji gambar statis adalah **4 dari 8 (50.0%)**.
 
 ---
 
-## ⚡ Redis Caching
+## 🚀 Panduan Menjalankan Sistem
 
-- Endpoint daftar skenario simulasi (`GET /api/scenarios`) di-cache di Redis (`waskita:scenarios:list`) dengan TTL 300 detik (5 menit).
-- Dilengkapi mekanisme *fallback* otomatis yang mulus bila service Redis sedang offline.
+### Prasyarat:
+- Node.js 18+ & npm
+- Python 3.10 - 3.13
+
+### Instalasi & Menjalankan:
+```bash
+# 1. Setup dependensi Python Backend
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+
+# 2. Setup dependensi Frontend
+npm install
+
+# 3. Jalankan Frontend (Port 3000) dan Backend (Port 8000) sekaligus:
+npm run dev
+```
+
+Aplikasi dapat dibuka melalui:
+- **Frontend**: [http://localhost:3000](http://localhost:3000)
+- **Dokumentasi API FastAPI**: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ---
 
-## 📁 Struktur Direktori Proyek
+## 📁 Struktur Repositori
 
 ```text
 waskita/
 ├── api/                     # Backend API (Python FastAPI)
-│   ├── core/                # Konfigurasi, DB Engine, & Keamanan JWT/bcrypt
-│   │   ├── config.py
-│   │   ├── database.py
-│   │   └── security.py
-│   ├── models/              # Model database SQLAlchemy
-│   │   ├── family.py
-│   │   ├── reported_number.py
-│   │   ├── scenario.py
-│   │   ├── user.py
-│   │   └── verification.py
-│   ├── routers/             # Endpoint API modular
-│   │   ├── auth.py          # /api/auth/register & /api/auth/login
-│   │   ├── family.py        # /api/family
-│   │   ├── scenarios.py     # /api/scenarios
-│   │   └── verify.py        # /api/verify
-│   ├── schemas/             # Schema validasi Pydantic
-│   ├── services/            # Engine AI, Heuristik, & Risk Translator
-│   │   ├── heuristic_scanner.py
-│   │   ├── ml_models.py
-│   │   └── risk_translator.py
-│   └── main.py              # Entry point FastAPI & startup lifespan
-│
+│   ├── core/                # Konfigurasi DB, keamanan JWT & bcrypt
+│   ├── models/              # Model database SQLAlchemy (User, Verification, Family)
+│   ├── routers/             # Endpoint API (/auth, /verify, /family, /scenarios)
+│   ├── schemas/             # Validasi Pydantic
+│   └── services/            # Engine AI, Forensik Akustik, & Intent NLP
 ├── src/                     # Frontend Web App (Next.js 16 App Router)
-│   ├── app/                 # Pages & Layouts
-│   │   ├── belajar/         # Halaman simulasi edukasi dinamis
-│   │   ├── daftar/          # Halaman registrasi akun baru
-│   │   ├── keluarga/        # Halaman pendamping keluarga
-│   │   ├── login/           # Halaman masuk akun
-│   │   ├── verifikasi/      # Alur verifikasi media (/proses, /hasil)
-│   │   ├── globals.css      # Design token & warna kustom
-│   │   └── layout.tsx       # Root layout & AuthProvider
-│   ├── components/          # Reusable UI (Navbar, Footer, ClarityGauge, AuthProvider)
-│   ├── lib/                 # API Client (api.ts) & NextAuth (auth.ts)
-│   └── styles/              # Custom styling
-│
-├── docker-compose.yml       # PostgreSQL 16 & Redis 7
-├── .env.example             # Template konfigurasi environment variables
-├── requirements.txt         # Dependensi Python Backend
-├── package.json             # Dependensi Frontend & unified dev runner
-├── tsconfig.json
-├── next.config.ts
-├── .gitignore
-└── README.md
+│   ├── app/                 # Halaman (/verifikasi, /belajar, /keluarga, /login)
+│   ├── components/          # Komponen UI (ClarityGauge, Navbar, Footer)
+│   └── lib/                 # API Client (api.ts) & Konfigurasi Auth
+├── kesimpulan.md            # Dokumentasi evaluasi dan arsitektur lengkap
+└── package.json             # Dependensi frontend & runner skrip
 ```
 
 ---
 
-## 🚀 Panduan Menjalankan Secara Lokal
+## ⚖️ Status Kesiapan & Lisensi
 
-### 1. Persiapan Dependensi (Hanya Sekali)
-
-1. **Python Virtual Environment & Dependencies**:
-   ```bash
-   python -m venv .venv
-   # Windows:
-   .\.venv\Scripts\Activate.ps1
-   # Linux/macOS:
-   source .venv/bin/activate
-
-   pip install -r requirements.txt
-   ```
-
-2. **Node.js Dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Salin Konfigurasi Environment**:
-   ```bash
-   cp .env.example .env
-   ```
-
----
-
-### 2. Menjalankan Aplikasi (Frontend + Backend)
-
-Cukup jalankan satu perintah dari root folder:
-
-```bash
-npm run dev
-```
-
-Perintah di atas akan otomatis mengaktifkan:
-- 🌐 **Frontend (Next.js)**: [http://localhost:3000](http://localhost:3000)
-- ⚙️ **Backend (FastAPI)**: [http://localhost:8000](http://localhost:8000)
-  - Dokumentasi Interaktif Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
-  - Health Check: [http://localhost:8000/health](http://localhost:8000/health)
-
----
-
-### 3. Menjalankan Docker Service (Opsional / Production Mode)
-
-Bila ingin menggunakan PostgreSQL dan Redis di background:
-```bash
-docker compose up -d
-```
-*(Bila Docker tidak dijalankan, aplikasi tetap berjalan normal dengan SQLite lokal).*
+Waskita berstatus **fungsional untuk demonstrasi dan evaluasi akademik/kompetisi**, telah diuji dengan sampel terbatas, dan siap dikembangkan lebih lanjut dengan dataset berskala lebih besar.

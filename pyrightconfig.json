@@ -2,6 +2,7 @@
   "venvPath": ".",
   "venv": ".venv",
   "extraPaths": [
+    "c:\\Users\\Adhitya Warman\\Desktop\\WASKITA",
     ".",
     ".venv/Lib/site-packages"
   ],

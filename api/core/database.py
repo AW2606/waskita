@@ -46,15 +46,31 @@ def init_db():
     """Create tables and apply schema updates if needed."""
     Base.metadata.create_all(bind=engine)
     
-    # Safe schema migration for users.password_hash
+    # Safe schema migration for users columns
     try:
         with engine.connect() as conn:
             inspector = inspect(engine)
             if "users" in inspector.get_table_names():
                 columns = [c["name"] for c in inspector.get_columns("users")]
+                
                 if "password_hash" not in columns:
                     logger.info("Migrating schema: Adding password_hash to users table...")
                     conn.execute(text("ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) DEFAULT ''"))
+                    conn.commit()
+
+                if "safe_word" not in columns:
+                    logger.info("Migrating schema: Adding safe_word to users table...")
+                    conn.execute(text("ALTER TABLE users ADD COLUMN safe_word VARCHAR(100) DEFAULT NULL"))
+                    conn.commit()
+
+                if "duress_code" not in columns:
+                    logger.info("Migrating schema: Adding duress_code to users table...")
+                    conn.execute(text("ALTER TABLE users ADD COLUMN duress_code VARCHAR(100) DEFAULT NULL"))
+                    conn.commit()
+
+                if "safe_word_updated_at" not in columns:
+                    logger.info("Migrating schema: Adding safe_word_updated_at to users table...")
+                    conn.execute(text("ALTER TABLE users ADD COLUMN safe_word_updated_at DATETIME DEFAULT NULL"))
                     conn.commit()
     except Exception as e:
         logger.warning(f"Schema migration notice: {e}")

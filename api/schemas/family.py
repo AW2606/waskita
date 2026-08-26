@@ -20,3 +20,24 @@ class FamilyMemberResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SafeWordUpdate(BaseModel):
+    safe_word: str
+    duress_code: Optional[str] = None
+
+
+class SafeWordStatusResponse(BaseModel):
+    has_safe_word: bool
+    has_duress_code: bool
+    safe_word_updated_at: Optional[datetime.datetime] = None
+
+
+class SafeWordVerifyRequest(BaseModel):
+    code: str
+
+
+class SafeWordVerifyResponse(BaseModel):
+    is_match: bool
+    matched_type: Optional[str] = None  # "safe_word", "duress_code", or None
+    message: str

@@ -9,6 +9,43 @@ from api.schemas.auth import RegisterRequest, LoginRequest, AuthResponse, UserRe
 router = APIRouter(prefix="/api/auth", tags=["Autentikasi"])
 
 
+def get_current_user_optional(
+    authorization: Optional[str] = Header(None),
+    x_user_email: Optional[str] = Header(None, alias="X-User-Email"),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id"),
+    db: Session = Depends(get_db),
+) -> Optional[User]:
+    """
+    Dependency to resolve the currently authenticated user if present, or None if guest.
+    """
+    user = None
+
+    try:
+        # 1. Try JWT Bearer Token
+        if authorization and authorization.startswith("Bearer "):
+            token = authorization.split(" ")[1]
+            payload = decode_access_token(token)
+            if payload:
+                user_id = payload.get("sub")
+                if user_id:
+                    user = db.query(User).filter(User.id == int(user_id)).first()
+
+        # 2. Try X-User-Id Header
+        if not user and x_user_id:
+            try:
+                user = db.query(User).filter(User.id == int(x_user_id)).first()
+            except (ValueError, TypeError):
+                pass
+
+        # 3. Try X-User-Email Header
+        if not user and x_user_email:
+            user = db.query(User).filter(User.email == x_user_email.strip().lower()).first()
+    except Exception:
+        user = None
+
+    return user
+
+
 def get_current_user(
     authorization: Optional[str] = Header(None),
     x_user_email: Optional[str] = Header(None, alias="X-User-Email"),
@@ -16,38 +53,20 @@ def get_current_user(
     db: Session = Depends(get_db),
 ) -> User:
     """
-    Dependency to resolve the currently authenticated user.
-    Supports JWT Bearer Token, X-User-Email, or X-User-Id header.
+    Strict dependency requiring the user to be authenticated.
     """
-    user = None
-
-    # 1. Try JWT Bearer Token
-    if authorization and authorization.startswith("Bearer "):
-        token = authorization.split(" ")[1]
-        payload = decode_access_token(token)
-        if payload:
-            user_id = payload.get("sub")
-            if user_id:
-                user = db.query(User).filter(User.id == int(user_id)).first()
-
-    # 2. Try X-User-Id Header
-    if not user and x_user_id:
-        try:
-            user = db.query(User).filter(User.id == int(x_user_id)).first()
-        except (ValueError, TypeError):
-            pass
-
-    # 3. Try X-User-Email Header
-    if not user and x_user_email:
-        user = db.query(User).filter(User.email == x_user_email.strip().lower()).first()
-
+    user = get_current_user_optional(
+        authorization=authorization,
+        x_user_email=x_user_email,
+        x_user_id=x_user_id,
+        db=db,
+    )
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Autentikasi diperlukan. Silakan login terlebih dahulu.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
     return user
 
 

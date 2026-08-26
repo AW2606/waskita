@@ -1,7 +1,17 @@
 [tool.pyrefly]
 venv = ".venv"
 python = ".venv/Scripts/python.exe"
+project_root = "c:\\Users\\Adhitya Warman\\Desktop\\WASKITA"
 search_paths = [
+    "c:\\Users\\Adhitya Warman\\Desktop\\WASKITA",
+    ".",
+    ".venv/Lib/site-packages"
+]
+
+[tool.pyright]
+include = ["api"]
+extraPaths = [
+    "c:\\Users\\Adhitya Warman\\Desktop\\WASKITA",
     ".",
     ".venv/Lib/site-packages"
 ]

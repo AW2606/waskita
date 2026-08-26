@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
@@ -17,6 +17,9 @@ import {
   Loader2,
   Lock,
   LogIn,
+  X,
+  Sparkles,
+  FileCheck,
 } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
@@ -28,8 +31,15 @@ export default function VerifikasiPage() {
   const router = useRouter();
   const { data: session, status } = useSession();
   const [selectedType, setSelectedType] = useState<ContentType>("suara");
+  
+  // Real File upload state
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Text & Phone state
   const [inputText, setInputText] = useState("");
-  const [dummyFileName, setDummyFileName] = useState<string | null>(null);
+
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -42,7 +52,8 @@ export default function VerifikasiPage() {
       icon: Mic,
       description: "Periksa voice note, rekaman panggilan, atau pesan suara.",
       category: "upload",
-      sampleHint: "Format .mp3, .m4a, .wav (Maks. 25MB)",
+      accept: "audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac",
+      sampleHint: "Mendukung .mp3, .wav, .m4a, .ogg (Maks. 25MB)",
     },
     {
       id: "video" as ContentType,
@@ -50,7 +61,8 @@ export default function VerifikasiPage() {
       icon: Video,
       description: "Periksa video wawancara, berita palsu, atau ekspresi wajah ganjil.",
       category: "upload",
-      sampleHint: "Format .mp4, .mov (Maks. 50MB)",
+      accept: "video/*,image/*,.mp4,.mov,.avi,.mkv,.webm,.jpg,.jpeg,.png",
+      sampleHint: "Mendukung .mp4, .mov, .avi, .webm (Maks. 50MB)",
     },
     {
       id: "pesan" as ContentType,
@@ -72,27 +84,151 @@ export default function VerifikasiPage() {
 
   const activeContent = contentTypes.find((t) => t.id === selectedType)!;
 
+  // Format file size in KB or MB
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return "0 Bytes";
+    const k = 1024;
+    const sizes = ["Bytes", "KB", "MB", "GB"];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+  };
+
+  // Handle file input change
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setSelectedFile(e.target.files[0]);
+      setErrorMessage(null);
+    }
+  };
+
+  // Handle Drag & Drop events
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const droppedFile = e.dataTransfer.files[0];
+      setSelectedFile(droppedFile);
+      setErrorMessage(null);
+    }
+  };
+
+  // Preset sample generator for testing when user has no audio/video file handy
+  const handleUsePresetSample = (type: "audio" | "video") => {
+    if (type === "audio") {
+      // Create a small valid WAV file in memory
+      const sampleRate = 16000;
+      const numSamples = sampleRate * 2; // 2 seconds
+      const buffer = new ArrayBuffer(44 + numSamples * 2);
+      const view = new DataView(buffer);
+
+      // WAV Header
+      const writeString = (offset: number, string: string) => {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i));
+        }
+      };
+
+      writeString(0, "RIFF");
+      view.setUint32(4, 36 + numSamples * 2, true);
+      writeString(8, "WAVE");
+      writeString(12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, 1, true); // Mono
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeString(36, "data");
+      view.setUint32(40, numSamples * 2, true);
+
+      // Synthesize tone data
+      for (let i = 0; i < numSamples; i++) {
+        const sample = Math.sin((i / sampleRate) * 440 * 2 * Math.PI) * 0.5;
+        view.setInt16(44 + i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+      }
+
+      const blob = new Blob([buffer], { type: "audio/wav" });
+      const sampleAudioFile = new File([blob], "rekaman_suara_mencurigakan_sample.wav", {
+        type: "audio/wav",
+      });
+      setSelectedType("suara");
+      setSelectedFile(sampleAudioFile);
+    } else {
+      // Sample image/video file
+      const canvas = document.createElement("canvas");
+      canvas.width = 300;
+      canvas.height = 300;
+      const ctx = canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#2F6F62";
+        ctx.fillRect(0, 0, 300, 300);
+        ctx.fillStyle = "#FFFFFF";
+        ctx.font = "20px sans-serif";
+        ctx.fillText("Waskita Deepfake Sample", 20, 150);
+      }
+      canvas.toBlob((blob) => {
+        if (blob) {
+          const sampleVideoFile = new File([blob], "video_tokoh_publik_sample.png", {
+            type: "image/png",
+          });
+          setSelectedType("video");
+          setSelectedFile(sampleVideoFile);
+        }
+      });
+    }
+  };
+
+  const handleRemoveFile = () => {
+    setSelectedFile(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorMessage(null);
 
-    if (status === "unauthenticated" || !token) {
-      router.push("/login");
+    // Validation
+    if (activeContent.category === "upload" && !selectedFile) {
+      setErrorMessage("Silakan pilih atau unggah file rekaman suara / video terlebih dahulu.");
+      return;
+    }
+
+    if (activeContent.category === "input" && !inputText.trim()) {
+      setErrorMessage(
+        selectedType === "telepon"
+          ? "Silakan masukkan nomor telepon yang ingin diperiksa."
+          : "Silakan masukkan teks pesan yang mencurigakan."
+      );
       return;
     }
 
     setIsLoading(true);
-    setErrorMessage(null);
 
     try {
       const formData = new FormData();
       formData.append("content_type", selectedType);
 
       if (activeContent.category === "input") {
-        formData.append("text_content", inputText || activeContent.placeholder || "");
-      } else {
-        // Dummy file simulation
-        const fakeFile = new Blob(["sample content data"], { type: "audio/mpeg" });
-        formData.append("file", fakeFile, dummyFileName || "sample_media_record.mp3");
+        formData.append("text_content", inputText.trim());
+      } else if (selectedFile) {
+        formData.append("file", selectedFile, selectedFile.name);
       }
 
       const result = await verifyContent(formData, token);
@@ -103,14 +239,6 @@ export default function VerifikasiPage() {
       setErrorMessage(msg);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleSimulateFileSelect = () => {
-    if (selectedType === "suara") {
-      setDummyFileName("rekaman_suara_mencurigakan.mp3");
-    } else {
-      setDummyFileName("video_konfirmasi_transfer.mp4");
     }
   };
 
@@ -129,7 +257,7 @@ export default function VerifikasiPage() {
             Apa yang ingin kamu periksa?
           </h1>
           <p className="font-body text-muted text-base sm:text-lg">
-            Pilih salah satu format konten di bawah untuk memulai verifikasi cepat dengan aman.
+            Pilih salah satu format konten di bawah untuk memulai verifikasi cerdas dengan model deteksi AI.
           </p>
         </div>
 
@@ -142,10 +270,10 @@ export default function VerifikasiPage() {
               </div>
               <div>
                 <h3 className="font-display font-semibold text-base text-ink">
-                  Masuk untuk Menyimpan Riwayat
+                  Mode Pengunjung (Tamu) Aktif
                 </h3>
                 <p className="font-body text-xs sm:text-sm text-muted">
-                  Hasil verifikasi akan terikat secara privat ke akun Anda dan file media langsung dihapus permanen.
+                  Anda dapat langsung memverifikasi media sekarang, atau masuk untuk menyimpan riwayat permanen di akun Anda.
                 </p>
               </div>
             </div>
@@ -170,7 +298,7 @@ export default function VerifikasiPage() {
                 type="button"
                 onClick={() => {
                   setSelectedType(item.id);
-                  setDummyFileName(null);
+                  setErrorMessage(null);
                 }}
                 className={`p-6 sm:p-7 rounded-2xl text-left transition-all duration-200 cursor-pointer flex items-start gap-5 border ${
                   isSelected
@@ -214,7 +342,9 @@ export default function VerifikasiPage() {
             <h2 className="font-display font-semibold text-xl text-ink">
               Unggah / Masukkan Data: {activeContent.title}
             </h2>
-            <span className="font-mono text-xs text-muted">Zero-Retention Policy</span>
+            <span className="font-mono text-xs text-primary font-medium flex items-center gap-1">
+              <ShieldCheck className="w-3.5 h-3.5" /> Zero-Retention Policy
+            </span>
           </div>
 
           {errorMessage && (
@@ -225,42 +355,115 @@ export default function VerifikasiPage() {
 
           {/* Render Drag & Drop Area for Voice / Video */}
           {activeContent.category === "upload" && (
-            <div
-              onClick={handleSimulateFileSelect}
-              className="border-2 border-dashed border-muted/40 hover:border-primary/60 bg-mist/60 hover:bg-mist p-8 sm:p-12 rounded-2xl text-center cursor-pointer transition-all duration-200 space-y-4"
-            >
-              <div className="w-14 h-14 rounded-2xl bg-white mx-auto flex items-center justify-center text-primary shadow-xs border border-muted/20">
-                {dummyFileName ? (
-                  selectedType === "suara" ? (
-                    <FileAudio className="w-7 h-7 text-primary" />
-                  ) : (
-                    <FileVideo className="w-7 h-7 text-primary" />
-                  )
-                ) : (
-                  <UploadCloud className="w-7 h-7 text-primary" />
-                )}
-              </div>
+            <div className="space-y-4">
+              {/* Hidden file input */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={activeContent.accept}
+                onChange={handleFileChange}
+                className="hidden"
+                id="media-file-upload-input"
+              />
 
-              {dummyFileName ? (
-                <div className="space-y-1">
-                  <p className="font-body font-semibold text-ink text-base sm:text-lg">
-                    {dummyFileName}
-                  </p>
-                  <p className="font-mono text-xs text-primary font-medium">
-                    File siap diperiksa (Klik untuk mengganti)
-                  </p>
+              {!selectedFile ? (
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`border-2 border-dashed p-8 sm:p-12 rounded-2xl text-center cursor-pointer transition-all duration-200 space-y-4 ${
+                    isDragging
+                      ? "border-primary bg-primary/10 ring-4 ring-primary/20 scale-[1.01]"
+                      : "border-muted/40 hover:border-primary/60 bg-mist/60 hover:bg-mist"
+                  }`}
+                >
+                  <div className="w-16 h-16 rounded-2xl bg-white mx-auto flex items-center justify-center text-primary shadow-xs border border-muted/20">
+                    <UploadCloud className="w-8 h-8 text-primary" />
+                  </div>
+
+                  <div className="space-y-1.5 max-w-md mx-auto">
+                    <p className="font-body font-semibold text-ink text-base sm:text-lg">
+                      {isDragging ? (
+                        "Lepaskan file di sini..."
+                      ) : (
+                        <>
+                          Tarik dan lepaskan file ke sini, atau{" "}
+                          <span className="text-primary underline font-bold">klik untuk memilih file</span>
+                        </>
+                      )}
+                    </p>
+                    <p className="font-body text-xs text-muted">
+                      {activeContent.sampleHint}
+                    </p>
+                  </div>
                 </div>
               ) : (
-                <div className="space-y-1">
-                  <p className="font-body font-semibold text-ink text-base sm:text-lg">
-                    Tarik dan lepaskan file ke sini, atau{" "}
-                    <span className="text-primary underline">klik untuk memilih file sampel</span>
-                  </p>
-                  <p className="font-body text-xs text-muted">
-                    {activeContent.sampleHint}
-                  </p>
+                /* Selected File Card */
+                <div className="p-6 rounded-2xl bg-mist/80 border border-primary/30 flex flex-col sm:flex-row items-center justify-between gap-4 animate-in fade-in">
+                  <div className="flex items-center gap-4 w-full sm:w-auto">
+                    <div className="w-14 h-14 rounded-2xl bg-primary/15 text-primary flex items-center justify-center shrink-0 border border-primary/20">
+                      {selectedType === "suara" ? (
+                        <FileAudio className="w-7 h-7" />
+                      ) : (
+                        <FileVideo className="w-7 h-7" />
+                      )}
+                    </div>
+                    <div className="space-y-1 flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-display font-semibold text-base text-ink truncate max-w-[280px] sm:max-w-md">
+                          {selectedFile.name}
+                        </h4>
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/15 text-primary font-mono text-xs font-semibold">
+                          <FileCheck className="w-3 h-3" /> Siap
+                        </span>
+                      </div>
+                      <p className="font-mono text-xs text-muted">
+                        Ukuran: {formatFileSize(selectedFile.size)} • Tipe: {selectedFile.type || selectedType}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-4 py-2 bg-white hover:bg-white/80 text-ink border border-muted/30 rounded-xl text-xs font-body font-medium transition-all cursor-pointer"
+                    >
+                      Ganti File
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleRemoveFile}
+                      className="p-2 text-muted hover:text-ink hover:bg-white rounded-xl transition-all cursor-pointer"
+                      title="Hapus file"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
               )}
+
+              {/* One-click Sample Test Buttons */}
+              <div className="pt-2 flex flex-wrap items-center gap-2 text-xs font-body text-muted">
+                <span className="flex items-center gap-1 font-medium text-ink">
+                  <Sparkles className="w-3.5 h-3.5 text-primary" /> Tidak punya file? Coba sampel uji cepat:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleUsePresetSample("audio")}
+                  className="px-3 py-1.5 rounded-lg bg-mist hover:bg-primary/10 text-primary border border-muted/20 font-medium transition-colors cursor-pointer"
+                >
+                  🎙️ Sampel Kloning Suara AI
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleUsePresetSample("video")}
+                  className="px-3 py-1.5 rounded-lg bg-mist hover:bg-primary/10 text-primary border border-muted/20 font-medium transition-colors cursor-pointer"
+                >
+                  🎬 Sampel Video Deepfake
+                </button>
+              </div>
             </div>
           )}
 
