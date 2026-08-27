@@ -135,6 +135,7 @@ function HasilContent() {
     detectedLinks: "",
     recompressionDetected: false,
     communityCached: false,
+    isSinglePhoto: false,
   };
 
   techLines.forEach((line) => {
@@ -160,6 +161,13 @@ function HasilContent() {
       extractedInfo.recompressionDetected = true;
     } else if (trimmed.includes("Community Fingerprint")) {
       extractedInfo.communityCached = true;
+    } else if (
+      trimmed.includes("Foto Tunggal") ||
+      trimmed.includes("Citra / Foto Tunggal") ||
+      trimmed.includes("Single-Frame") ||
+      trimmed.includes("1 frame")
+    ) {
+      extractedInfo.isSinglePhoto = true;
     }
   });
 
@@ -202,6 +210,23 @@ function HasilContent() {
           <div className="py-2">
             <ClarityGauge value={gaugeValue} />
           </div>
+
+          {/* Single Image / Static Photo Uncertainty Disclaimer Banner */}
+          {data.content_type.toLowerCase() === "video" && extractedInfo.isSinglePhoto && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-700 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="space-y-0.5">
+                <span className="font-mono text-2xs text-amber-800 uppercase tracking-wider font-semibold block">
+                  Perhatian Khusus Foto Tunggal
+                </span>
+                <p className="font-body text-xs sm:text-sm text-ink/90 leading-relaxed font-medium">
+                  Analisis foto tunggal memiliki tingkat ketidakpastian lebih tinggi dibanding video — hasil ini sangat disarankan diverifikasi manual.
+                </p>
+              </div>
+            </div>
+          )}
 
           {/* Video Temporal & Compression Badge */}
           {data.content_type.toLowerCase() === "video" && extractedInfo.recompressionDetected && (

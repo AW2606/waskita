@@ -297,12 +297,18 @@ function runClientHeuristicAnalysis(
       explanation =
         "Suara ini terdeteksi dibuat menggunakan teknologi sintesis AI (AI Voice Generator / TTS), namun isi pesan merupakan narasi edukasi / informasi publik tentang modus penipuan dan BUKAN instruksi jahat yang mendesak Anda. Anda dapat menyimak tips pencegahan tersebut dengan aman.";
       technicalDetail = `• Klasifikasi Niat (Intent): ${intentLabel}\n• Konteks Niat: ${intentSummary}\n• Skor Probabilitas Deepfake (Akustik): ${acousticScore}.0%\n• Skor Risiko Modus Penipuan (Konten): 8.0%\n• Indikator Frasa Terdeteksi: ${matched.join(", ") || "rahasia, secepatnya"}\n• Catatan: Frasa risiko muncul dalam konteks penjelasan pencegahan penipuan.\n• Privasi: File audio telah dihapus otomatis (Zero Retention Policy).\n• Mode: Analisis Komputasi Lokal (Offline Resilience).`;
-    } else if (intentFrame === "serangan_langsung" || matched.length >= 2) {
+    } else if (intentFrame === "serangan_langsung" && (isAiVoice || matched.length >= 2)) {
       riskLevel = "sangat_waspada";
       score = 92;
       explanation =
         "PERINGATAN GANDA TINGKAT TINGGI: Rekaman ini terindikasi kuat menggunakan suara tiruan AI (deepfake audio) SEKALIGUS memuat instruksi penipuan rekayasa sosial berbahaya / pemerasan dana darurat. Segera putus komunikasi dan JANGAN ikuti instruksi penelepon.";
       technicalDetail = `• Klasifikasi Niat (Intent): ${intentLabel}\n• Konteks Niat: ${intentSummary}\n• Skor Probabilitas Deepfake (Akustik): ${acousticScore}.0%\n• Skor Risiko Modus Penipuan (Konten): 94.0%\n• Indikator Frasa Berisiko Terdeteksi: ${matched.join(", ")}\n• Privasi: File audio telah dihapus otomatis (Zero Retention Policy).\n• Mode: Analisis Komputasi Lokal (Offline Resilience).`;
+    } else if (isAiVoice || matched.length >= 1) {
+      riskLevel = "perlu_diperiksa";
+      score = 58;
+      explanation =
+        "Terdeteksi anomali pada modulasi vokal atau beberapa frasa yang menyerupai pola rekayasa sosial. Disarankan untuk memverifikasi langsung dengan pihak terkait sebelum mengambil tindakan penting.";
+      technicalDetail = `• Klasifikasi Niat (Intent): ${intentLabel}\n• Skor Probabilitas Deepfake: ${acousticScore}.0%\n• Rekomendasi: Lakukan verifikasi manual ke nomor resmi.\n• Mode: Analisis Komputasi Lokal (Offline Resilience).`;
     } else {
       riskLevel = "tenang";
       score = 16;

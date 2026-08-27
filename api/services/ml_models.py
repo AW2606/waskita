@@ -239,6 +239,7 @@ class ModelManager:
         self.vision_model = None
         self.vision_image_processor = None
         self.vision_model_name = VISION_MODEL_ID
+        self.vision_id2label = {0: "Deepfake", 1: "Realism"}  # Default; updated dynamically on load
         
         self.is_loading = False
 
@@ -287,21 +288,53 @@ class ModelManager:
             self.vision_image_processor = AutoImageProcessor.from_pretrained(self.vision_model_name)
             self.vision_model = AutoModelForImageClassification.from_pretrained(self.vision_model_name)
             self.vision_model.eval()
-            logger.info("Vision Model (ViT) loaded successfully.")
+
+            # Read label mapping dynamically from model config
+            self.vision_id2label = self.vision_model.config.id2label
+            logger.info(f"Vision Model (ViT) loaded successfully. id2label: {self.vision_id2label}")
         except Exception as e:
             logger.warning(f"Could not load HuggingFace vision model {self.vision_model_name}: {e}. Fallback enabled.")
             self.vision_model = None
             self.vision_image_processor = None
+            self.vision_id2label = {0: "Deepfake", 1: "Realism"}
 
         self.is_loading = False
 
     def decode_and_resample_audio(self, file_bytes: bytes) -> Tuple[Optional[np.ndarray], float]:
         """
         Decodes audio bytes and resamples to 16,000 Hz mono float32 array.
+        Uses a fallback chain: soundfile -> pydub (ffmpeg) for broad format support including MP3.
         """
-        import soundfile as sf
-        with io.BytesIO(file_bytes) as bio:
-            audio_data, sample_rate = sf.read(bio)
+        audio_data = None
+        sample_rate = None
+
+        # Attempt 1: soundfile (supports WAV, FLAC, OGG, but NOT MP3)
+        try:
+            import soundfile as sf
+            with io.BytesIO(file_bytes) as bio:
+                audio_data, sample_rate = sf.read(bio)
+        except Exception as sf_err:
+            logger.info(f"soundfile decode failed (expected for MP3): {sf_err}. Trying pydub fallback.")
+
+        # Attempt 2: pydub (supports MP3, AAC, M4A, WMA, and all ffmpeg-supported formats)
+        if audio_data is None:
+            try:
+                from pydub import AudioSegment
+                with io.BytesIO(file_bytes) as bio:
+                    audio_seg = AudioSegment.from_file(bio)
+                # Convert to mono, extract raw samples
+                audio_seg = audio_seg.set_channels(1)
+                sample_rate = audio_seg.frame_rate
+                samples = np.array(audio_seg.get_array_of_samples(), dtype=np.float32)
+                # Normalize to [-1.0, 1.0] range based on sample width
+                max_val = float(2 ** (audio_seg.sample_width * 8 - 1))
+                audio_data = samples / max_val
+            except Exception as pydub_err:
+                logger.warning(f"pydub decode also failed: {pydub_err}")
+                raise RuntimeError(
+                    f"Format audio tidak dapat didekode oleh soundfile maupun pydub/ffmpeg. "
+                    f"Pastikan file audio valid dan ffmpeg terinstal."
+                )
 
         if audio_data.ndim > 1:
             audio_data = np.mean(audio_data, axis=1)
@@ -438,7 +471,14 @@ class ModelManager:
 
         # 2. Extract 5 frames evenly spaced using OpenCV
         if not frames:
-            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp_video:
+            # Use actual file extension so OpenCV can detect the correct codec
+            file_ext = ".mp4"
+            if filename:
+                import pathlib
+                ext = pathlib.Path(filename).suffix.lower()
+                if ext:
+                    file_ext = ext
+            with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp_video:
                 tmp_video.write(file_bytes)
                 tmp_video_path = tmp_video.name
 
@@ -486,18 +526,27 @@ class ModelManager:
         frame_deepfake_scores: List[float] = []
 
         if self.vision_model is not None and self.vision_image_processor is not None:
+            # Resolve which logit index corresponds to "Deepfake" from model config
+            deepfake_idx = 0  # default per prithivMLmods/Deep-Fake-Detector-v2-Model
+            for idx, label in self.vision_id2label.items():
+                if str(label).lower() in ["deepfake", "fake", "spoof"]:
+                    deepfake_idx = int(idx)
+                    break
+            logger.info(f"Vision model deepfake logit index resolved to: {deepfake_idx} (label: {self.vision_id2label.get(deepfake_idx, 'unknown')})")
+
             try:
                 for frame_img in frames:
                     inputs = self.vision_image_processor(images=frame_img, return_tensors="pt")
                     with torch.no_grad():
-                        logits = self.vision_model(**inputs).logits
-                        probs = torch.softmax(logits, dim=-1).squeeze().tolist()
+                        raw_logits = self.vision_model(**inputs).logits
+                        probs = torch.softmax(raw_logits, dim=-1).squeeze().tolist()
 
-                    # Model id2label: {0: 'Realism', 1: 'Deepfake'}
+                    # Use softmax probabilities with dynamically resolved label index
                     if isinstance(probs, list) and len(probs) >= 2:
-                        deepfake_p = float(probs[1])
+                        deepfake_p = float(probs[deepfake_idx])
+                        deepfake_p = min(0.96, max(0.04, deepfake_p))
                     else:
-                        deepfake_p = float(probs) if isinstance(probs, (float, int)) else 0.5
+                        deepfake_p = 0.50
 
                     frame_deepfake_scores.append(deepfake_p)
             except Exception as e:
@@ -523,12 +572,21 @@ class ModelManager:
             for i, score in enumerate(frame_deepfake_scores)
         ]
 
-        notes = [
-            f"Telah dianalisis {len(frames)} frame representatif dari video secara merata.",
-            f"Model spesifik: {self.vision_model_name}.",
-            f"Rincian skor per-frame: {', '.join(frame_breakdown)}.",
-            f"Rata-rata probabilitas Deepfake: {avg_score:.1%}.",
-        ]
+        is_single_image = len(frames) == 1
+        if is_single_image:
+            notes = [
+                "Tipe Media: Citra / Foto Tunggal (Single-Frame Static Image).",
+                "Pemberitahuan: Analisis foto tunggal memiliki tingkat ketidakpastian lebih tinggi dibanding video — hasil ini sangat disarankan diverifikasi manual.",
+                f"Model spesifik: {self.vision_model_name}.",
+                f"Probabilitas Deepfake: {avg_score:.1%}.",
+            ]
+        else:
+            notes = [
+                f"Telah dianalisis {len(frames)} frame representatif dari video secara merata.",
+                f"Model spesifik: {self.vision_model_name}.",
+                f"Rincian skor per-frame: {', '.join(frame_breakdown)}.",
+                f"Rata-rata probabilitas Deepfake: {avg_score:.1%}.",
+            ]
         if video_forensics.get("notes"):
             notes.extend(video_forensics["notes"])
 
@@ -536,6 +594,7 @@ class ModelManager:
             "model_name": self.vision_model_name,
             "architecture": "Vision Transformer (ViT) + Temporal Forensics",
             "frames_analyzed": len(frames),
+            "is_single_image": is_single_image,
             "frame_scores": [round(s, 4) for s in frame_deepfake_scores],
             "frame_breakdown": ", ".join(frame_breakdown),
             "recompression_detected": video_forensics.get("recompression_detected", False),

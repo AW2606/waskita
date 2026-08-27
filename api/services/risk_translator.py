@@ -42,6 +42,19 @@ def translate_risk(
     if is_educational and not is_link_threat:
         risk_level = "tenang"
         int_score = min(22, max(8, int_score))
+    elif content_type in ["audio", "suara"]:
+        # Strict Intent-Gated Fusion for Audio:
+        # 'sangat_waspada' REQUIRES BOTH an active scam threat (intent_frame == 'serangan_langsung') AND acoustic deepfake indicator.
+        # High acoustic score alone on neutral/informational conversation caps at 'perlu_diperiksa' (max 65%).
+        if is_content_threat and (is_acoustic_threat or score_clamped > 0.70):
+            risk_level = "sangat_waspada"
+            int_score = max(78, int_score)
+        elif is_acoustic_threat or is_content_threat or score_clamped >= 0.40:
+            risk_level = "perlu_diperiksa"
+            int_score = min(65, max(45, int_score))
+        else:
+            risk_level = "tenang"
+            int_score = min(35, int_score)
     elif score_clamped < 0.40:
         risk_level = "tenang"
     elif score_clamped <= 0.70:

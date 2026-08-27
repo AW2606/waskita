@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "concurrently -k -n \"NEXT,API\" -c \"cyan.bold,magenta.bold\" \"npm run dev:next\" \"npm run dev:api\"",
+    "dev:unix": "concurrently -k -n \"NEXT,API\" -c \"cyan.bold,magenta.bold\" \"npm run dev:next\" \"npm run dev:api:unix\"",
     "dev:next": "next dev",
     "dev:api": ".venv\\Scripts\\python -m uvicorn api.main:app --reload --port 8000",
     "dev:api:unix": ".venv/bin/python -m uvicorn api.main:app --reload --port 8000",

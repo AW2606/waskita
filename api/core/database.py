@@ -44,6 +44,7 @@ def get_db():
 
 def init_db():
     """Create tables and apply schema updates if needed."""
+    import api.models  # noqa: F401 - Register all models with Base.metadata
     Base.metadata.create_all(bind=engine)
     
     # Safe schema migration for users columns
