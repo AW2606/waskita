@@ -113,8 +113,8 @@ Waskita memadukan model pembelajaran mendalam (*deep learning*) dan teknik foren
    - **Profil Formant Vocoder**: Analisis konsentrasi energi frekuensi menengah ($1.0 - 3.5\text{ kHz}$) dan *spectral rolloff*.
 
 2. **Jalur Video & Citra (Visual Deepfake Detection)**:
-   - **Model Pretrained**: [`prithivMLmods/Deep-Fake-Detector-v2-Model`](https://huggingface.co/prithivMLmods/Deep-Fake-Detector-v2-Model) (Vision Transformer / ViT).
-   - **Metode**: *Uniform temporal sampling* (5 frame representatif via OpenCV) dipadukan dengan *Calibrated Logit Margin* dan penandaan ketidakpastian khusus citra diam (*single-frame disclaimer*).
+   - **Model Pretrained**: [`dima806/deepfake_vs_real_image_detection`](https://huggingface.co/dima806/deepfake_vs_real_image_detection) (Vision Transformer / ViT terlatih pada 140k+ dataset wajah asli vs deepfake).
+   - **Metode**: *Uniform temporal sampling* (5 frame representatif via OpenCV) dipadukan dengan *Aspect-Preserving Smart Cropping* dan evaluasi kontinuitas temporal.
 
 3. **Jalur Teks Chat & Tautan Phishing**:
    - **Heuristik NLP Bahasa Indonesia**: Pemetaan singkatan gaul percakapan darurat (`"trfd skrg"`, `"tf bsk"`, `"jgn ksh tau"`) dan klasifikasi 6 klaster modus rekayasa sosial.

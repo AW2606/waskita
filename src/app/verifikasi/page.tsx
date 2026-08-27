@@ -20,10 +20,12 @@ import {
   X,
   Sparkles,
   FileCheck,
+  RotateCcw,
+  CheckCircle2,
 } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
-import { verifyContent } from "@/lib/api";
+import { verifyContent, clearVerificationCache } from "@/lib/api";
 
 type ContentType = "suara" | "video" | "pesan" | "telepon";
 
@@ -42,6 +44,11 @@ export default function VerifikasiPage() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Cache & Testing controls
+  const [bypassCache, setBypassCache] = useState<boolean>(false);
+  const [isClearingCache, setIsClearingCache] = useState<boolean>(false);
+  const [cacheSuccessMessage, setCacheSuccessMessage] = useState<string | null>(null);
 
   const token = (session as unknown as { accessToken?: string })?.accessToken;
 
@@ -200,9 +207,30 @@ export default function VerifikasiPage() {
     }
   };
 
+  const handleClearCache = async () => {
+    setIsClearingCache(true);
+    setCacheSuccessMessage(null);
+    setErrorMessage(null);
+    try {
+      const res = await clearVerificationCache(token);
+      setCacheSuccessMessage(
+        res.cleared_count > 0
+          ? `Berhasil menghapus ${res.cleared_count} data sidik jari cache! Analisis berikutnya akan memproses file secara utuh dengan model AI terkini.`
+          : "Cache sidik jari & browser berhasil dibersihkan! Anda dapat menguji ulang file yang sama."
+      );
+      setTimeout(() => setCacheSuccessMessage(null), 6000);
+    } catch (err: unknown) {
+      console.error("Gagal bersihkan cache:", err);
+      setErrorMessage("Gagal membersihkan cache sidik jari.");
+    } finally {
+      setIsClearingCache(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
+    setCacheSuccessMessage(null);
 
     // Validation
     if (activeContent.category === "upload" && !selectedFile) {
@@ -224,6 +252,10 @@ export default function VerifikasiPage() {
     try {
       const formData = new FormData();
       formData.append("content_type", selectedType);
+
+      if (bypassCache) {
+        formData.append("bypass_cache", "true");
+      }
 
       if (activeContent.category === "input") {
         formData.append("text_content", inputText.trim());
@@ -492,6 +524,45 @@ export default function VerifikasiPage() {
               </p>
             </div>
           )}
+
+          {/* Testing & Cache Controls (Untuk Pengujian & Perbandingan Model) */}
+          <div className="pt-4 border-t border-muted/20 space-y-3">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 bg-mist/60 p-4 rounded-xl border border-muted/25 text-xs font-body">
+              <label className="flex items-center gap-2.5 text-ink hover:text-primary cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={bypassCache}
+                  onChange={(e) => setBypassCache(e.target.checked)}
+                  className="w-4 h-4 rounded text-primary focus:ring-primary border-muted/40 cursor-pointer accent-primary"
+                />
+                <span className="font-medium text-ink">
+                  Paksa Analisis Ulang Model AI (Bypass Cache Hash)
+                </span>
+              </label>
+
+              <button
+                type="button"
+                onClick={handleClearCache}
+                disabled={isClearingCache}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white hover:bg-caution/15 text-muted hover:text-ink border border-muted/30 transition-all cursor-pointer disabled:opacity-50 shrink-0 font-medium"
+                title="Hapus semua cache sidik jari SHA-256 tersimpan untuk pengujian perbandingan model"
+              >
+                {isClearingCache ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-primary" />
+                ) : (
+                  <RotateCcw className="w-3.5 h-3.5 text-primary" />
+                )}
+                <span>{isClearingCache ? "Menghapus..." : "Hapus Cache Sidik Jari"}</span>
+              </button>
+            </div>
+
+            {cacheSuccessMessage && (
+              <div className="p-3.5 bg-primary/10 text-primary border border-primary/25 rounded-xl text-xs font-body flex items-center gap-2 animate-in fade-in">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>{cacheSuccessMessage}</span>
+              </div>
+            )}
+          </div>
 
           {/* Submit Button */}
           <div className="pt-2 flex justify-end">

@@ -17,6 +17,24 @@ def translate_risk(
     - score > 0.70          -> 'sangat_waspada'
     """
     metadata = metadata or {}
+
+    # Fail-Closed Safety: If decoding/extraction failed, never return false safety
+    if metadata.get("status") == "tidak_dapat_diperiksa" or raw_score is None:
+        error_desc = metadata.get("error", "Format media tidak dapat didekode oleh sistem.")
+        return {
+            "risk_level": "tidak_dapat_diperiksa",
+            "score": 0,
+            "explanation": (
+                "Media tidak dapat diproses oleh sistem (kemungkinan format atau codec video/audio tidak didukung). "
+                "Sistem TIDAK DAPAT memastikan keaslian konten ini — sangat disarankan untuk melakukan verifikasi manual langsung ke pihak terkait."
+            ),
+            "technical_detail": (
+                f"• Status: Gagal Memproses Media ({error_desc})\n"
+                "• Prinsip Keamanan Fail-Closed: Sistem menolak memberikan vonis aman secara otomatis saat ekstraksi frame/audio gagal.\n"
+                "• Rekomendasi Tindakan: Hubungi pihak pengirim melalui saluran alternatif resmi sebelum mengambil keputusan finansial atau administratif."
+            ),
+        }
+
     score_clamped = max(0.0, min(1.0, float(raw_score)))
     int_score = int(round(score_clamped * 100))
 

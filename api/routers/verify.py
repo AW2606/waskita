@@ -17,6 +17,7 @@ from api.services.fingerprint_service import (
     lookup_fingerprint,
     register_fingerprint,
     record_community_feedback,
+    clear_all_fingerprints,
 )
 from api.routers.auth import get_current_user_optional
 
@@ -33,6 +34,7 @@ async def create_verification(
     content_type: str = Form(...),
     text_content: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
+    bypass_cache: bool = Form(False),
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db),
 ):
@@ -58,7 +60,7 @@ async def create_verification(
         # -------------------------------------------------------------------------
         # Step 1: Privacy-Preserving Community Fingerprint Cache Check (0ms Fast-Path)
         # -------------------------------------------------------------------------
-        if content_hash:
+        if content_hash and not bypass_cache:
             cached_result = lookup_fingerprint(db, content_hash)
             if cached_result and cached_result.get("is_cached"):
                 verification_id = f"wsk_{uuid.uuid4().hex[:8]}"
@@ -132,7 +134,10 @@ async def create_verification(
                     intent_frame = content_meta.get("intent_frame", "netral_ambigu")
 
                     # Calibrated Intent-Gated Multi-Factor Fusion Score
-                    if intent_frame == "edukasi_informasi":
+                    if acoustic_score is None:
+                        fused_score = None
+                        acoustic_meta["status"] = "tidak_dapat_diperiksa"
+                    elif intent_frame == "edukasi_informasi":
                         # Content is educational awareness / tips -> Safe from fraud risk (Tenang)
                         fused_score = min(0.20, content_score)
                     elif intent_frame == "serangan_langsung":
@@ -178,23 +183,7 @@ async def create_verification(
                 raw_score, meta = await asyncio.to_thread(
                     model_mgr.predict_video, file_bytes, filename
                 )
-                if raw_score is None:
-                    result = {
-                        "risk_level": "perlu_diperiksa",
-                        "score": 50,
-                        "explanation": (
-                            "Kami tidak dapat mengekstraksi dan memeriksa frame video ini dengan yakin. "
-                            "Format media mungkin mengalami gangguan atau kompresi berlebih. "
-                            "Sebaiknya lakukan verifikasi manual langsung dengan pihak yang bersangkutan."
-                        ),
-                        "technical_detail": (
-                            "• Status: Gagal memproses frame video.\n"
-                            f"• Keterangan Sistem: {meta.get('error', 'Format video tidak terbaca.')}\n"
-                            "• Kebijakan Privasi: File video telah dihapus seketika dari memori server (Zero Retention)."
-                        ),
-                    }
-                else:
-                    result = translate_risk(raw_score, "video", meta)
+                result = translate_risk(raw_score, "video", meta)
 
         # -------------------------------------------------------------------------
         # Track 2: Text / Chat Message Verification (Hybrid Indonesian Scanner + Link Phishing)
@@ -310,4 +299,19 @@ def submit_verification_feedback(
         "message": "Terima kasih! Masukan Anda sangat berharga untuk meningkatkan akurasi Waskita.",
         "verification_id": verification_id,
         "is_positive": feedback.is_positive,
+    }
+
+
+@router.post("/cache/clear")
+@router.delete("/cache")
+def clear_cache(db: Session = Depends(get_db)):
+    """
+    Temporary testing utility: Deletes all saved community fingerprints from database.
+    Allows repeated verification testing of the exact same audio/video/text files with fresh AI model inferences.
+    """
+    deleted = clear_all_fingerprints(db)
+    return {
+        "status": "success",
+        "message": f"Berhasil menghapus {deleted} data cache sidik jari (fingerprint) verifikasi.",
+        "cleared_count": deleted,
     }

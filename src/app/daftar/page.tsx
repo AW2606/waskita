@@ -48,7 +48,14 @@ export default function DaftarPage() {
       }
     } catch (err: unknown) {
       console.error("Registration error:", err);
-      const msg = err instanceof Error ? err.message : "Terjadi kesalahan saat mendaftar.";
+      let msg = "Terjadi kesalahan saat mendaftar.";
+      if (err instanceof Error) {
+        if (err.message.includes("Failed to fetch") || err.name === "TypeError") {
+          msg = "Tidak dapat terhubung ke Server Backend (Port 8000). Pastikan server backend FastAPI sudah dijalankan.";
+        } else {
+          msg = err.message;
+        }
+      }
       setErrorMessage(msg);
     } finally {
       setIsLoading(false);

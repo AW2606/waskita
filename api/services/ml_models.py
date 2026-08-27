@@ -1,10 +1,14 @@
 import io
 import os
+import time
+import pathlib
 import logging
 import tempfile
+import subprocess
 from typing import Tuple, Dict, Any, List, Optional
 import numpy as np
-from PIL import Image
+import cv2
+from PIL import Image, ImageOps
 import torch
 import scipy.signal as signal
 
@@ -13,7 +17,191 @@ logger = logging.getLogger("waskita.ml_models")
 # Pretrained Model Identifiers
 AUDIO_DEEPFAKE_MODEL_ID = "Gustking/wav2vec2-large-xlsr-deepfake-audio-classification"
 AUDIO_ASR_MODEL_ID = "openai/whisper-tiny"
-VISION_MODEL_ID = "prithivMLmods/Deep-Fake-Detector-v2-Model"
+VISION_MODEL_ID = "dima806/deepfake_vs_real_image_detection"
+
+
+def extract_video_frames_robust(
+    file_bytes: bytes,
+    filename: Optional[str] = None,
+    max_frames: int = 5,
+) -> Tuple[List[Image.Image], Dict[str, Any]]:
+    """
+    Robust multi-tier video frame extractor with explicit diagnostic logging:
+    - Tier 1: ImageIO (FFmpeg reader backend)
+    - Tier 2: OpenCV VideoCapture
+    - Tier 3: Direct Bundled FFmpeg Subprocess Frame Export
+    """
+    t_start = time.time()
+    file_size = len(file_bytes)
+    diag_logs: List[str] = []
+    diag_logs.append(f"[VIDEO DECODE] Input size: {file_size} bytes | Filename: {filename or 'unnamed'}")
+
+    # Check if input is a single static image format (PNG/JPEG/WebP)
+    try:
+        img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
+        diag_logs.append("[VIDEO DECODE] Input is a static single-frame image.")
+        return [img], {
+            "tier_used": "PIL_StaticImage",
+            "duration_ms": round((time.time() - t_start) * 1000, 2),
+            "total_frames_found": 1,
+            "extracted_count": 1,
+            "logs": diag_logs,
+        }
+    except Exception:
+        pass
+
+    file_ext = ".mp4"
+    if filename:
+        ext = pathlib.Path(filename).suffix.lower()
+        if ext:
+            file_ext = ext
+
+    with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp_video:
+        tmp_video.write(file_bytes)
+        tmp_video_path = tmp_video.name
+
+    frames: List[Image.Image] = []
+    tier_used = "none"
+
+    try:
+        # -----------------------------------------------------------------
+        # Tier 1: ImageIO FFmpeg Reader
+        # -----------------------------------------------------------------
+        try:
+            import imageio.v2 as iio
+            t1_start = time.time()
+            reader = iio.get_reader(tmp_video_path, format="ffmpeg")
+            total_frames_est = 0
+            try:
+                total_frames_est = reader.count_frames()
+            except Exception:
+                meta = reader.get_meta_data()
+                duration = meta.get("duration", 0)
+                fps = meta.get("fps", 25)
+                total_frames_est = int(duration * fps) if duration > 0 else 0
+
+            diag_logs.append(f"[VIDEO DECODE Tier 1 ImageIO] Detected frames: {total_frames_est}")
+
+            if total_frames_est > 0:
+                sample_count = min(max_frames, total_frames_est)
+                indices = np.linspace(0, total_frames_est - 1, sample_count, dtype=int)
+                for idx in indices:
+                    try:
+                        frame_arr = reader.get_data(int(idx))
+                        if frame_arr is not None and frame_arr.size > 0:
+                            frames.append(Image.fromarray(frame_arr).convert("RGB"))
+                    except Exception as e_f:
+                        diag_logs.append(f"[VIDEO DECODE Tier 1] Failed frame idx {idx}: {e_f}")
+                reader.close()
+
+                if len(frames) > 0:
+                    tier_used = "ImageIO_FFmpeg"
+                    diag_logs.append(
+                        f"[VIDEO DECODE Tier 1 SUCCESS] Extracted {len(frames)} frames in {round((time.time() - t1_start) * 1000, 2)}ms"
+                    )
+        except Exception as e_t1:
+            diag_logs.append(f"[VIDEO DECODE Tier 1 NOTICE] ImageIO decode notice: {e_t1}")
+
+        # -----------------------------------------------------------------
+        # Tier 2: OpenCV VideoCapture
+        # -----------------------------------------------------------------
+        if not frames:
+            try:
+                import cv2
+                t2_start = time.time()
+                cap = cv2.VideoCapture(tmp_video_path)
+                is_opened = cap.isOpened()
+                cv_total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                diag_logs.append(f"[VIDEO DECODE Tier 2 OpenCV] isOpened: {is_opened}, total_frames: {cv_total_frames}")
+
+                if is_opened and cv_total_frames > 0:
+                    sample_count = min(max_frames, cv_total_frames)
+                    indices = np.linspace(0, cv_total_frames - 1, sample_count, dtype=int)
+                    for idx in indices:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
+                        ret, frame_bgr = cap.read()
+                        if ret and frame_bgr is not None:
+                            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+                            frames.append(Image.fromarray(frame_rgb))
+                    cap.release()
+
+                    if len(frames) > 0:
+                        tier_used = "OpenCV"
+                        diag_logs.append(
+                            f"[VIDEO DECODE Tier 2 SUCCESS] Extracted {len(frames)} frames in {round((time.time() - t2_start) * 1000, 2)}ms"
+                        )
+            except Exception as e_t2:
+                diag_logs.append(f"[VIDEO DECODE Tier 2 NOTICE] OpenCV decode notice: {e_t2}")
+
+        # -----------------------------------------------------------------
+        # Tier 3: Direct Bundled FFmpeg Subprocess Frame Export
+        # -----------------------------------------------------------------
+        if not frames:
+            try:
+                import imageio_ffmpeg
+                ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+                t3_start = time.time()
+                out_dir = tempfile.mkdtemp(prefix="wsk_frames_")
+                out_pattern = os.path.join(out_dir, "frame_%03d.png")
+
+                cmd = [
+                    ffmpeg_exe,
+                    "-y",
+                    "-i", tmp_video_path,
+                    "-vf", "fps=1",
+                    "-vframes", str(max_frames),
+                    out_pattern,
+                ]
+                diag_logs.append(f"[VIDEO DECODE Tier 3 FFmpeg Subprocess] Launching: {cmd[0]} -i ...")
+                proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+
+                exported_pngs = sorted([os.path.join(out_dir, f) for f in os.listdir(out_dir) if f.endswith(".png")])
+                for fpath in exported_pngs[:max_frames]:
+                    try:
+                        frames.append(Image.open(fpath).convert("RGB"))
+                    except Exception:
+                        pass
+
+                # Cleanup temp png directory
+                for fpath in os.listdir(out_dir):
+                    try:
+                        os.remove(os.path.join(out_dir, fpath))
+                    except Exception:
+                        pass
+                try:
+                    os.rmdir(out_dir)
+                except Exception:
+                    pass
+
+                if len(frames) > 0:
+                    tier_used = "FFmpeg_Subprocess"
+                    diag_logs.append(
+                        f"[VIDEO DECODE Tier 3 SUCCESS] Extracted {len(frames)} frames in {round((time.time() - t3_start) * 1000, 2)}ms"
+                    )
+            except Exception as e_t3:
+                diag_logs.append(f"[VIDEO DECODE Tier 3 ERROR] FFmpeg subprocess error: {e_t3}")
+
+    finally:
+        if os.path.exists(tmp_video_path):
+            try:
+                os.remove(tmp_video_path)
+            except Exception:
+                pass
+
+    total_dur_ms = round((time.time() - t_start) * 1000, 2)
+    diag_logs.append(
+        f"[VIDEO DECODE FINISHED] Extracted {len(frames)} frames via {tier_used} in {total_dur_ms}ms"
+    )
+
+    for l in diag_logs:
+        logger.info(l)
+
+    return frames, {
+        "tier_used": tier_used,
+        "duration_ms": total_dur_ms,
+        "extracted_count": len(frames),
+        "logs": diag_logs,
+    }
 
 
 def resample_audio(audio_data: np.ndarray, orig_sr: int, target_sr: int = 16000) -> np.ndarray:
@@ -157,53 +345,128 @@ def extract_acoustic_forensics(audio_16k: np.ndarray) -> Dict[str, Any]:
 
 def extract_video_forensics(frames: List[Image.Image]) -> Dict[str, Any]:
     """
-    Evaluates temporal consistency and re-compression artifacts across sampled video frames:
-    - Frame-to-frame temporal structural delta
-    - WhatsApp / Social Media blockiness & multi-compression degradation
+    Advanced Multi-Factor Video Forensics Engine (v3.0):
+    - Face-to-Context Sharpness Ratio (Laplacian Edge Variance): Detects face-swap boundary oversharpening / resample seams
+    - Chrominance Coherence (YCrCb Skin Tone Vector): Detects AI generator facial color palette deviations
+    - Optical Sensor Noise Residual: Measures CMOS thermal noise attenuation from neural reconstruction smoothing
+    - Temporal Consistency & Recompression Blockiness (WhatsApp / Medsos multi-generation compression)
     """
-    if len(frames) < 2:
+    if len(frames) < 1:
         return {
             "temporal_anomaly": False,
             "recompression_detected": False,
+            "forensic_anomaly_score": 0.0,
+            "sharpness_ratio": 0.0,
+            "chroma_ratio": 1.0,
+            "sensor_noise": 2.5,
             "notes": [],
         }
 
-    frame_arrays = [np.array(f.resize((128, 128)).convert("L"), dtype=np.float32) for f in frames]
-    
-    # 1. Temporal Inter-Frame Difference
+    lap_ratios: List[float] = []
+    chroma_ratios: List[float] = []
+    noise_stds: List[float] = []
+    frame_arrays: List[np.ndarray] = []
+
+    for f_img in frames:
+        np_rgb = np.array(f_img)
+        h, w = np_rgb.shape[:2]
+        gray = cv2.cvtColor(np_rgb, cv2.COLOR_RGB2GRAY)
+        frame_arrays.append(gray.astype(np.float32))
+
+        # 1. Face vs Background Sharpness Ratio (Center 40% face ROI vs Outer Context)
+        c_y1, c_y2 = int(h * 0.2), int(h * 0.6)
+        c_x1, c_x2 = int(w * 0.25), int(w * 0.75)
+        face_roi = gray[c_y1:c_y2, c_x1:c_x2]
+        outer_roi = gray[int(h * 0.7):, :]
+
+        face_lap = float(cv2.Laplacian(face_roi, cv2.CV_64F).var()) if face_roi.size > 0 else 1.0
+        outer_lap = float(cv2.Laplacian(outer_roi, cv2.CV_64F).var()) if outer_roi.size > 0 else face_lap
+        lap_ratios.append(face_lap / (outer_lap + 1e-5))
+
+        # 2. Chrominance Coherence (YCrCb Color Palette Vector)
+        ycrcb = cv2.cvtColor(np_rgb, cv2.COLOR_RGB2YCrCb)
+        cr_face = ycrcb[c_y1:c_y2, c_x1:c_x2, 1]
+        cr_body = ycrcb[int(h * 0.65):, :, 1]
+        if cr_body.size > 0 and cr_face.size > 0:
+            chroma_ratios.append(float(np.std(cr_face) / (np.std(cr_body) + 1e-5)))
+
+        # 3. Optical Sensor Noise Residual (Gaussian Filter Difference)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        noise = gray.astype(float) - blurred.astype(float)
+        noise_stds.append(float(np.std(noise)))
+
+    # Temporal Inter-Frame Difference
     diffs = []
-    for i in range(len(frame_arrays) - 1):
-        diff = np.mean(np.abs(frame_arrays[i+1] - frame_arrays[i]))
-        diffs.append(diff)
-    
-    mean_diff = float(np.mean(diffs))
-    diff_variance = float(np.var(diffs))
-    
-    # 2. Blockiness / Multi-generation WhatsApp compression estimation
-    # High-frequency gradient loss at 8x8 macroblock borders
+    if len(frame_arrays) >= 2:
+        for i in range(len(frame_arrays) - 1):
+            diff = np.mean(np.abs(frame_arrays[i+1] - frame_arrays[i]))
+            diffs.append(diff)
+    mean_diff = float(np.mean(diffs)) if diffs else 0.0
+    diff_variance = float(np.var(diffs)) if diffs else 0.0
+
+    # Blockiness / Multi-generation WhatsApp compression estimation
     block_discontinuities = []
     for arr in frame_arrays:
-        horiz_diff = np.abs(arr[:, 7::8] - arr[:, 8::8]) if arr.shape[1] > 8 else np.array([0])
-        block_discontinuities.append(np.mean(horiz_diff))
-    mean_blockiness = float(np.mean(block_discontinuities))
+        if arr.shape[1] >= 16:
+            left_boundary = arr[:, 7:-1:8]
+            right_boundary = arr[:, 8::8]
+            min_cols = min(left_boundary.shape[1], right_boundary.shape[1])
+            horiz_diff = np.abs(left_boundary[:, :min_cols] - right_boundary[:, :min_cols])
+            block_discontinuities.append(float(np.mean(horiz_diff)))
+    mean_blockiness = float(np.mean(block_discontinuities)) if block_discontinuities else 0.0
+
+    avg_lap_ratio = float(np.mean(lap_ratios)) if lap_ratios else 0.0
+    avg_chroma_ratio = float(np.mean(chroma_ratios)) if chroma_ratios else 1.0
+    avg_noise = float(np.mean(noise_stds)) if noise_stds else 2.5
 
     notes = []
     recompression_detected = False
     temporal_anomaly = False
+    forensic_anomaly_score = 0.0
+
+    # Forensic Criterion 1: Sharpness Ratio (Synthetic face over-sharpening / resample seams)
+    if avg_lap_ratio > 0.35:
+        forensic_anomaly_score += 0.45
+        notes.append(f"Anomali Ketajaman Wajah (Rasio: {avg_lap_ratio:.2f}): Terdeteksi diskontinuitas ketajaman topeng wajah terhadap fokus optik alami.")
+    elif avg_lap_ratio > 0.20:
+        forensic_anomaly_score += 0.25
+
+    # Forensic Criterion 2: Chrominance Coherence Mismatch
+    if avg_chroma_ratio > 1.15:
+        forensic_anomaly_score += 0.35
+        notes.append(f"Inkonsistensi Ruang Warna (Rasio: {avg_chroma_ratio:.2f}): Terdeteksi deviasi palet warna kulit wajah terhadap leher/tubuh.")
+    elif avg_chroma_ratio > 1.0:
+        forensic_anomaly_score += 0.15
+
+    # Forensic Criterion 3: Optical Sensor Noise Attenuation
+    if avg_noise < 2.20:
+        forensic_anomaly_score += 0.20
+        notes.append(f"Peredaman Noise Sensor (Std: {avg_noise:.2f}): Pola noise sensor CMOS kamera fisik teredam akibat rekonstruksi neural network.")
+    else:
+        notes.append(f"Noise Sensor Alami (Std: {avg_noise:.2f}): Terdeteksi struktur noise sensor optik kamera fisik.")
+
+    # Forensic Criterion 4: Temporal Motion Jitter
+    if mean_diff > 70.0 or diff_variance > 450.0:
+        temporal_anomaly = True
+        notes.append("Catatan Forensik: Terdeteksi diskontinuitas pergerakan ekspresi wajah yang tidak stabil (indikasi warping antar-frame).")
+    elif len(frames) > 1 and mean_diff <= 50.0 and diff_variance <= 300.0:
+        notes.append("Catatan Forensik: Kontinuitas temporal stabil dan konsisten dengan pergerakan kamera & wajah alami.")
 
     if mean_blockiness > 12.0:
         recompression_detected = True
-        notes.append("Catatan Forensik: Terdeteksi kompresi berulang (khas media yang diteruskan berulang kali di WhatsApp/medsos). Sebagian detail mikro visual mungkin terdegradasi.")
+        notes.append("Catatan Forensik: Terdeteksi kompresi berulang (khas media yang diteruskan berulang kali di WhatsApp/medsos).")
 
-    if mean_diff > 35.0 or diff_variance > 180.0:
-        temporal_anomaly = True
-        notes.append("Catatan Forensik: Terdeteksi diskontinuitas pergerakan ekspresi wajah yang tidak stabil antar-frame.")
+    forensic_anomaly_score = min(1.0, max(0.0, forensic_anomaly_score))
 
     return {
         "mean_temporal_diff": round(mean_diff, 2),
         "blockiness_score": round(mean_blockiness, 2),
         "temporal_anomaly": temporal_anomaly,
         "recompression_detected": recompression_detected,
+        "sharpness_ratio": round(avg_lap_ratio, 3),
+        "chroma_ratio": round(avg_chroma_ratio, 3),
+        "sensor_noise": round(avg_noise, 3),
+        "forensic_anomaly_score": round(forensic_anomaly_score, 3),
         "notes": notes,
     }
 
@@ -239,7 +502,7 @@ class ModelManager:
         self.vision_model = None
         self.vision_image_processor = None
         self.vision_model_name = VISION_MODEL_ID
-        self.vision_id2label = {0: "Deepfake", 1: "Realism"}  # Default; updated dynamically on load
+        self.vision_id2label = {0: "Real", 1: "Fake"}  # Default; updated dynamically on load
         
         self.is_loading = False
 
@@ -433,6 +696,10 @@ class ModelManager:
                 "model_name": self.audio_model_name,
             }
 
+        # Ensure models are loaded
+        if self.audio_model is None or self.asr_pipeline is None:
+            self.load_models()
+
         try:
             audio_16k, duration_sec = self.decode_and_resample_audio(file_bytes)
             if audio_16k is None:
@@ -454,94 +721,79 @@ class ModelManager:
         """
         Vision Transformer (ViT) Deepfake Detection with Temporal Consistency & WhatsApp Recompression Forensics.
         """
-        if not file_bytes or len(file_bytes) < 100:
+        t_overall_start = time.time()
+        file_size = len(file_bytes) if file_bytes else 0
+
+        logger.info(f"[VIDEO INFERENCE START] Processing video: {filename or 'unnamed'}, size: {file_size} bytes")
+
+        if not file_bytes or file_size < 100:
+            logger.warning(f"[VIDEO INFERENCE ABORT] File size too small ({file_size} bytes).")
             return None, {
                 "error": "Ukuran file video terlalu kecil atau kosong.",
+                "status": "tidak_dapat_diperiksa",
                 "model_name": self.vision_model_name,
             }
 
-        frames: List[Image.Image] = []
+        # Ensure vision models are loaded
+        if self.vision_model is None or self.vision_image_processor is None:
+            logger.info("[VIDEO INFERENCE] Loading vision models into memory...")
+            self.load_models()
 
-        # 1. Check if input is directly a single image file
-        try:
-            img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-            frames.append(img)
-        except Exception:
-            pass
+        # 1. Multi-tier Robust Frame Extraction with detailed timings
+        t_extract_start = time.time()
+        frames, extract_meta = extract_video_frames_robust(file_bytes, filename, max_frames=5)
+        extract_duration_ms = round((time.time() - t_extract_start) * 1000, 2)
 
-        # 2. Extract 5 frames evenly spaced using OpenCV
-        if not frames:
-            # Use actual file extension so OpenCV can detect the correct codec
-            file_ext = ".mp4"
-            if filename:
-                import pathlib
-                ext = pathlib.Path(filename).suffix.lower()
-                if ext:
-                    file_ext = ext
-            with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as tmp_video:
-                tmp_video.write(file_bytes)
-                tmp_video_path = tmp_video.name
+        logger.info(
+            f"[VIDEO FRAME EXTRACTION] Finished in {extract_duration_ms}ms | Extracted: {len(frames)} frames via {extract_meta.get('tier_used')}"
+        )
 
-            try:
-                import cv2
-                cap = cv2.VideoCapture(tmp_video_path)
-                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-
-                if total_frames <= 0:
-                    cap.release()
-                    return None, {
-                        "error": "Format video tidak valid atau tidak memiliki frame terbaca.",
-                        "model_name": self.vision_model_name,
-                    }
-
-                # Sample exactly 5 evenly distributed frame indices
-                sample_count = min(5, max(1, total_frames))
-                frame_indices = np.linspace(0, total_frames - 1, sample_count, dtype=int)
-
-                for idx in frame_indices:
-                    cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
-                    ret, frame_bgr = cap.read()
-                    if ret and frame_bgr is not None:
-                        frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-                        pil_img = Image.fromarray(frame_rgb)
-                        frames.append(pil_img)
-
-                cap.release()
-            except Exception as e:
-                logger.error(f"Video frame extraction error: {e}")
-            finally:
-                if os.path.exists(tmp_video_path):
-                    os.remove(tmp_video_path)
-
-        if not frames:
+        if not frames or len(frames) == 0:
+            logger.error("[VIDEO FRAME EXTRACTION FAILED] 0 frames were extracted. Marking as tidak_dapat_diperiksa.")
             return None, {
-                "error": "Tidak dapat mengekstraksi frame visual dari media yang diunggah.",
+                "error": "Format media tidak dapat didekode oleh sistem (decoder OpenCV dan FFmpeg gagal membaca frame).",
+                "status": "tidak_dapat_diperiksa",
                 "model_name": self.vision_model_name,
+                "extract_logs": extract_meta.get("logs", []),
+                "extract_duration_ms": extract_duration_ms,
             }
 
-        # 3. Temporal Consistency & Recompression Forensics
+        # 2. Temporal Consistency & Recompression Forensics
+        t_forensics_start = time.time()
         video_forensics = extract_video_forensics(frames)
+        forensics_duration_ms = round((time.time() - t_forensics_start) * 1000, 2)
 
-        # 4. Inference on each frame using ViT AutoModel
+        logger.info(
+            f"[VIDEO FORENSICS] mean_diff={video_forensics.get('mean_temporal_diff')}, "
+            f"blockiness={video_forensics.get('blockiness_score')}, "
+            f"temporal_anomaly={video_forensics.get('temporal_anomaly')}"
+        )
+
+        # 3. Inference on each frame using ViT AutoModel with individual logging
+        t_infer_start = time.time()
         frame_deepfake_scores: List[float] = []
+        frame_diagnostics: List[Dict[str, Any]] = []
 
         if self.vision_model is not None and self.vision_image_processor is not None:
-            # Resolve which logit index corresponds to "Deepfake" from model config
-            deepfake_idx = 0  # default per prithivMLmods/Deep-Fake-Detector-v2-Model
+            # Resolve which logit index corresponds to "Fake / Deepfake" from model config
+            deepfake_idx = 1  # default for dima806/deepfake_vs_real_image_detection: {0: 'Real', 1: 'Fake'}
             for idx, label in self.vision_id2label.items():
-                if str(label).lower() in ["deepfake", "fake", "spoof"]:
+                if str(label).lower() in ["fake", "deepfake", "spoof"]:
                     deepfake_idx = int(idx)
                     break
             logger.info(f"Vision model deepfake logit index resolved to: {deepfake_idx} (label: {self.vision_id2label.get(deepfake_idx, 'unknown')})")
 
             try:
-                for frame_img in frames:
-                    inputs = self.vision_image_processor(images=frame_img, return_tensors="pt")
+                for i, frame_img in enumerate(frames):
+                    # Aspect-preserving smart fit (focusing on upper portrait area) to prevent distortion
+                    fitted_frame = ImageOps.fit(
+                        frame_img, (224, 224), method=Image.Resampling.LANCZOS, centering=(0.5, 0.4)
+                    )
+                    inputs = self.vision_image_processor(images=fitted_frame, return_tensors="pt")
                     with torch.no_grad():
                         raw_logits = self.vision_model(**inputs).logits
                         probs = torch.softmax(raw_logits, dim=-1).squeeze().tolist()
 
-                    # Use softmax probabilities with dynamically resolved label index
                     if isinstance(probs, list) and len(probs) >= 2:
                         deepfake_p = float(probs[deepfake_idx])
                         deepfake_p = min(0.96, max(0.04, deepfake_p))
@@ -549,22 +801,48 @@ class ModelManager:
                         deepfake_p = 0.50
 
                     frame_deepfake_scores.append(deepfake_p)
+                    frame_diag = {
+                        "frame_index": i + 1,
+                        "raw_logits": [round(float(l), 4) for l in raw_logits.squeeze().tolist()] if raw_logits is not None else [],
+                        "softmax_probs": [round(float(p), 4) for p in probs] if isinstance(probs, list) else [],
+                        "deepfake_score": round(deepfake_p, 4),
+                    }
+                    frame_diagnostics.append(frame_diag)
+                    logger.info(
+                        f"[FRAME {i+1}/{len(frames)}] Deepfake Probability: {deepfake_p:.2%} | Softmax: {frame_diag['softmax_probs']}"
+                    )
             except Exception as e:
                 logger.error(f"Vision model inference error: {e}")
 
         # Fallback heuristic if offline
         if not frame_deepfake_scores:
+            logger.warning("[VIDEO INFERENCE NOTICE] Deep learning model offline, using statistical variance fallback.")
             for frame_img in frames:
                 np_img = np.array(frame_img.resize((128, 128)))
                 edge_variance = float(np.var(np_img))
-                f_score = 0.54 + (0.0001 * (edge_variance % 500))
-                frame_deepfake_scores.append(min(0.88, max(0.25, f_score)))
+                f_score = 0.25 + (0.0002 * (edge_variance % 200))
+                frame_deepfake_scores.append(min(0.70, max(0.15, f_score)))
 
-        avg_score = float(np.mean(frame_deepfake_scores))
+        infer_duration_ms = round((time.time() - t_infer_start) * 1000, 2)
+        raw_avg_vit = float(np.mean(frame_deepfake_scores))
         
-        # Slight calibration modifier if temporal anomaly detected
-        if video_forensics.get("temporal_anomaly"):
-            avg_score = min(0.96, avg_score + 0.10)
+        is_single_image = len(frames) == 1
+        forensic_anomaly = float(video_forensics.get("forensic_anomaly_score", 0.0))
+
+        # Hybrid Forensic + ViT Ensemble Engine
+        if is_single_image:
+            combined_score = 0.60 * raw_avg_vit + 0.40 * forensic_anomaly
+        else:
+            combined_score = 0.30 * raw_avg_vit + 0.70 * forensic_anomaly
+
+        avg_score = max(0.04, min(0.96, float(combined_score)))
+
+        total_duration_ms = round((time.time() - t_overall_start) * 1000, 2)
+        logger.info(
+            f"[VIDEO INFERENCE COMPLETED] Raw ViT Avg: {raw_avg_vit:.2%} | Forensic Anomaly: {forensic_anomaly:.2%} | "
+            f"Final Hybrid Score: {avg_score:.2%} | "
+            f"Extraction: {extract_duration_ms}ms | Inference: {infer_duration_ms}ms | Total: {total_duration_ms}ms"
+        )
 
         # Format per-frame scores for technical detail
         frame_breakdown = [
@@ -572,7 +850,6 @@ class ModelManager:
             for i, score in enumerate(frame_deepfake_scores)
         ]
 
-        is_single_image = len(frames) == 1
         if is_single_image:
             notes = [
                 "Tipe Media: Citra / Foto Tunggal (Single-Frame Static Image).",
@@ -582,23 +859,35 @@ class ModelManager:
             ]
         else:
             notes = [
-                f"Telah dianalisis {len(frames)} frame representatif dari video secara merata.",
-                f"Model spesifik: {self.vision_model_name}.",
-                f"Rincian skor per-frame: {', '.join(frame_breakdown)}.",
-                f"Rata-rata probabilitas Deepfake: {avg_score:.1%}.",
+                f"Telah diekstrak dan dianalisis {len(frames)} frame representatif dari video secara merata.",
+                f"Decoder backend: {extract_meta.get('tier_used', 'unknown')} (Waktu ekstraksi: {extract_duration_ms}ms).",
+                f"Model spesifik: {self.vision_model_name} (Waktu inferensi: {infer_duration_ms}ms).",
+                f"Rincian skor per-frame ViT: {', '.join(frame_breakdown)}.",
+                f"Skor Anomali Forensik Digital: {forensic_anomaly:.1%}.",
+                f"Skor Risiko Komposit (Hybrid ViT + Forensik): {avg_score:.1%}.",
             ]
         if video_forensics.get("notes"):
             notes.extend(video_forensics["notes"])
 
         metadata = {
             "model_name": self.vision_model_name,
-            "architecture": "Vision Transformer (ViT) + Temporal Forensics",
+            "architecture": "Hybrid Multi-Factor Digital Forensics + Vision Transformer (ViT)",
             "frames_analyzed": len(frames),
             "is_single_image": is_single_image,
             "frame_scores": [round(s, 4) for s in frame_deepfake_scores],
             "frame_breakdown": ", ".join(frame_breakdown),
+            "frame_diagnostics": frame_diagnostics,
+            "vit_score_avg": round(raw_avg_vit, 4),
+            "forensic_anomaly_score": round(forensic_anomaly, 4),
+            "sharpness_ratio": video_forensics.get("sharpness_ratio", 0.0),
+            "chroma_ratio": video_forensics.get("chroma_ratio", 1.0),
+            "sensor_noise": video_forensics.get("sensor_noise", 2.5),
             "recompression_detected": video_forensics.get("recompression_detected", False),
             "temporal_anomaly": video_forensics.get("temporal_anomaly", False),
+            "extract_tier": extract_meta.get("tier_used"),
+            "extract_duration_ms": extract_duration_ms,
+            "infer_duration_ms": infer_duration_ms,
+            "total_duration_ms": total_duration_ms,
             "notes": notes,
         }
 

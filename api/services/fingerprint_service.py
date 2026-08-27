@@ -104,3 +104,17 @@ def record_community_feedback(
 
     db.commit()
     return True
+
+
+def clear_all_fingerprints(db: Session) -> int:
+    """
+    Deletes all records from the CommunityFingerprint table for testing, benchmarking, and debugging purposes.
+    Returns the number of deleted records.
+    """
+    try:
+        deleted_count = db.query(CommunityFingerprint).delete()
+        db.commit()
+        return int(deleted_count)
+    except Exception as e:
+        db.rollback()
+        raise e
