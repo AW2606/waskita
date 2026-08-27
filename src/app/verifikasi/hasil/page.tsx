@@ -178,9 +178,9 @@ function HasilContent() {
       <main className="flex-1 w-full max-w-4xl mx-auto px-6 sm:px-8 py-10 sm:py-16 space-y-8 sm:space-y-10">
         {/* Header Summary */}
         <div className="text-center space-y-2 max-w-xl mx-auto">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary font-mono text-xs uppercase tracking-wider">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary font-mono text-base font-bold uppercase tracking-wider">
             <ShieldCheck className="w-3.5 h-3.5" />
-            Hasil Analisis Selesai
+            Analisis Berhasil
           </div>
           <h1 className="font-display font-semibold text-3xl sm:text-4xl text-ink tracking-tight">
             Ringkasan Kejernihan Konten
