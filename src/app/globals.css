@@ -20,25 +20,243 @@
   --radius-2xl: 24px;
 }
 
+
+/* =========================================================
+   LIGHT MODE
+   ========================================================= */
+
 :root {
   --background: #F3F6F4;
   --foreground: #10322C;
+
+  --surface: #FFFFFF;
+  --surface-secondary: #F3F6F4;
+  --border: rgba(138, 147, 142, 0.2);
+  --text-primary: #10322C;
+  --text-secondary: #66736D;
 }
+
+
+/* =========================================================
+   DARK MODE
+   ========================================================= */
+
+.dark {
+  --background: #111827;
+  --foreground: #F3F4F6;
+
+  --surface: #1F2937;
+  --surface-secondary: #111827;
+  --border: rgba(255, 255, 255, 0.1);
+  --text-primary: #F3F4F6;
+  --text-secondary: #9CA3AF;
+
+  --color-mist: #111827;
+  --color-ink: #F3F4F6;
+  --color-primary: #5FAF9F;
+  --color-accent: #E5B85C;
+  --color-muted: #9CA3AF;
+  --color-caution: #D9A052;
+}
+
+
+/* =========================================================
+   HTML
+   ========================================================= */
 
 html {
-  font-size: 18px; /* 18px base font-size untuk aksesibilitas dan keterbacaan tinggi bagi lansia/kelompok rentan */
+  font-size: 18px;
 }
+
+
+/* =========================================================
+   BODY
+   ========================================================= */
 
 body {
-  background-color: var(--color-mist, #F3F6F4);
-  color: var(--color-ink, #10322C);
-  font-family: var(--font-body), "Atkinson Hyperlegible", sans-serif;
+  background-color: var(--background);
+  color: var(--foreground);
+
+  font-family: var(--font-body),
+    "Atkinson Hyperlegible",
+    sans-serif;
+
   line-height: 1.6;
+
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+
+  transition:
+    background-color 0.25s ease,
+    color 0.25s ease;
 }
 
-h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-display), "Fraunces", Georgia, serif;
-  color: var(--color-ink, #10322C);
+
+/* =========================================================
+   HEADINGS
+   ========================================================= */
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-display),
+    "Fraunces",
+    Georgia,
+    serif;
+
+  color: var(--foreground);
+}
+
+
+/* =========================================================
+   NAVBAR
+   ========================================================= */
+
+header {
+  background-color: color-mix(
+    in srgb,
+    var(--background) 90%,
+    transparent
+  );
+
+  border-color: var(--border);
+}
+
+
+/* =========================================================
+   LIGHT MODE ELEMENTS
+   ========================================================= */
+
+.bg-white {
+  background-color: var(--surface);
+}
+
+.bg-mist {
+  background-color: var(--surface-secondary);
+}
+
+.text-ink {
+  color: var(--text-primary);
+}
+
+.text-muted {
+  color: var(--text-secondary);
+}
+
+
+/* =========================================================
+   DARK MODE ELEMENTS
+   ========================================================= */
+
+.dark .bg-white {
+  background-color: #1F2937;
+}
+
+.dark .bg-mist {
+  background-color: #111827;
+}
+
+.dark .text-ink {
+  color: #F3F4F6;
+}
+
+.dark .text-muted {
+  color: #9CA3AF;
+}
+
+
+/* =========================================================
+   BORDER
+   ========================================================= */
+
+.dark .border-muted\/20 {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+
+/* =========================================================
+   HOVER
+   ========================================================= */
+
+.dark .hover\:bg-mist:hover {
+  background-color: #1F2937;
+}
+
+
+/* =========================================================
+   FORM / INPUT
+   ========================================================= */
+
+.dark input,
+.dark textarea,
+.dark select {
+  background-color: #1F2937;
+  color: #F3F4F6;
+  border-color: #374151;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #9CA3AF;
+}
+
+
+/* =========================================================
+   CARD
+   ========================================================= */
+
+.dark .card {
+  background-color: #1F2937;
+  border-color: #374151;
+}
+
+
+/* =========================================================
+   LINK
+   ========================================================= */
+
+.dark a {
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+
+/* =========================================================
+   BUTTON
+   ========================================================= */
+
+button {
+  transition:
+    background-color 0.2s ease,
+    color 0.2s ease,
+    border-color 0.2s ease,
+    transform 0.2s ease;
+}
+
+
+/* =========================================================
+   DARK MODE SCROLLBAR
+   ========================================================= */
+
+.dark {
+  scrollbar-color: #4B5563 #111827;
+}
+
+
+/* =========================================================
+   SMOOTH THEME TRANSITION
+   ========================================================= */
+
+* {
+  transition-property:
+    background-color,
+    border-color,
+    color;
+
+  transition-duration: 200ms;
+  transition-timing-function: ease;
 }
