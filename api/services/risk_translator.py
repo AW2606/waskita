@@ -57,22 +57,20 @@ def translate_risk(
     is_educational = intent_frame == "edukasi_informasi"
 
     # Determine risk level category
-    if is_educational and not is_link_threat:
-        risk_level = "tenang"
-        int_score = min(22, max(8, int_score))
-    elif content_type in ["audio", "suara"]:
-        # Strict Intent-Gated Fusion for Audio:
-        # 'sangat_waspada' REQUIRES BOTH an active scam threat (intent_frame == 'serangan_langsung') AND acoustic deepfake indicator.
-        # High acoustic score alone on neutral/informational conversation caps at 'perlu_diperiksa' (max 65%).
-        if is_content_threat and (is_acoustic_threat or score_clamped > 0.70):
+    if content_type in ["audio", "suara"]:
+        # Audio / Voice Verification is focused strictly on Voice Biometrics & Deepfake AI Detection
+        if score_clamped >= 0.65 or (is_acoustic_threat and score_clamped >= 0.50):
             risk_level = "sangat_waspada"
-            int_score = max(78, int_score)
-        elif is_acoustic_threat or is_content_threat or score_clamped >= 0.40:
+            int_score = max(70, int_score)
+        elif score_clamped >= 0.40 or is_acoustic_threat:
             risk_level = "perlu_diperiksa"
-            int_score = min(65, max(45, int_score))
+            int_score = min(64, max(42, int_score))
         else:
             risk_level = "tenang"
             int_score = min(35, int_score)
+    elif is_educational and not is_link_threat and content_type in ["pesan", "text"]:
+        risk_level = "tenang"
+        int_score = min(22, max(8, int_score))
     elif score_clamped < 0.40:
         risk_level = "tenang"
     elif score_clamped <= 0.70:
@@ -84,60 +82,34 @@ def translate_risk(
 
     # Contextual explanations (Plain Indonesian language + Empathetic Guidance)
     if content_type in ["audio", "suara"]:
-        if is_educational:
+        if risk_level == "sangat_waspada":
             if is_acoustic_threat:
                 explanation = (
-                    "Suara ini terdeteksi dibuat menggunakan teknologi sintesis AI (AI Voice Generator / TTS), "
-                    "namun isi pesan merupakan narasi edukasi / informasi publik tentang modus penipuan dan BUKAN instruksi jahat yang mendesak Anda. "
-                    "Anda dapat menyimak informasi dan tips pencegahan tersebut dengan aman."
+                    "Indikasi suara tiruan sintesis AI (deepfake audio / voice cloning / TTS) pada rekaman ini terdeteksi kuat. "
+                    "Karakteristik spektral, jeda digital, dan dinamika formant vokal menunjukkan ciri khas suara buatan kecerdasan buatan. "
+                    "Sangat disarankan untuk melakukan verifikasi silang langsung melalui panggilan video atau kontak resmi terpercaya sebelum mempercayai isi rekaman."
                 )
             else:
                 explanation = (
-                    "Rekaman ini menggunakan suara manusia alami dengan isi narasi edukasi / tips pencegahan penipuan yang bermanfaat. "
-                    "Tidak ditemukan indikasi rekayasa sosial atau ancaman yang berbahaya."
-                )
-        elif risk_level == "sangat_waspada":
-            if is_content_threat and is_acoustic_threat:
-                explanation = (
-                    "PERINGATAN GANDA TINGKAT TINGGI: Rekaman ini terindikasi kuat menggunakan suara tiruan AI (deepfake audio) "
-                    "SEKALIGUS memuat instruksi penipuan rekayasa sosial berbahaya / pemerasan finansial. "
-                    "Sangat disarankan untuk segera memutus komunikasi dan TIDAK mentransfer uang maupun memberikan data rahasia."
-                )
-            elif is_content_threat:
-                explanation = (
-                    "Meskipun karakter gelombang suara berasal dari manusia asli (bukan kloning AI), isi percakapan yang diucapkan "
-                    "memuat pola penipuan rekayasa sosial berisiko sangat tinggi (seperti intimidasi, desakan transfer darurat, atau permintaan OTP). "
+                    "Meskipun karakter gelombang suara berasal dari manusia asli, isi percakapan yang diucapkan "
+                    "memuat pola penipuan rekayasa sosial berisiko sangat tinggi. "
                     "Jangan ikuti instruksi penelepon dan lakukan verifikasi mandiri ke pihak resmi."
                 )
-            else:
-                explanation = (
-                    "Indikasi suara tiruan sintesis AI (deepfake audio / voice cloning) pada rekaman ini terdeteksi kuat. "
-                    "Meskipun isi pembicaraan tampak wajar, teknologi kloning suara sering digunakan untuk memalsukan identitas keluarga atau pimpinan. "
-                    "Lakukan verifikasi silang langsung melalui kontak asli yang terpercaya sebelum mengambil tindakan apa pun."
-                )
         elif risk_level == "perlu_diperiksa":
-            if is_ambiguous_zone:
+            if is_acoustic_threat or is_ambiguous_zone:
                 explanation = (
-                    "Hasil analisis berada pada zona waspada menengah. Terdapat beberapa kata kunci atau modulasi nada yang mencurigakan, "
-                    "namun belum cukup bukti untuk menyimpulkan niat jahat secara mutlak. "
-                    "Sangat disarankan untuk melakukan verifikasi silang langsung ke nomor resmi yang tersimpan di kontak pribadi Anda."
-                )
-            elif is_content_threat:
-                explanation = (
-                    "Percakapan ini memuat kata kunci bernada desakan atau permintaan yang menyerupai pola rekayasa sosial. "
-                    "Meskipun bukan vonis mutlak niat jahat, kami menyarankan Anda untuk menunda setiap keputusan penting "
-                    "dan memverifikasi langsung ke pihak terkait."
+                    "Kami menemukan ketidaksesuaian pada dinamika frekuensi dan jeda vokal yang memiliki kemiripan dengan karakter generator vokal AI. "
+                    "Tingkat keyakinan berada pada zona menengah — sebaiknya hubungi langsung pihak yang bersangkutan melalui saluran komunikasi terpercaya."
                 )
             else:
                 explanation = (
-                    "Kami menemukan ketidaksesuaian pada dinamika frekuensi suara yang memiliki kemiripan dengan karakter filter vokal AI. "
-                    "Sebaiknya hubungi langsung pihak yang bersangkutan melalui panggilan video atau kontak terpercaya."
+                    "Percakapan ini memuat modulasi vokal atau kata kunci yang perlu diwaspadai. "
+                    "Sebaiknya tunda setiap keputusan penting dan lakukan konfirmasi mandiri."
                 )
         else:  # tenang
             explanation = (
-                "Pola vokal dan isi percakapan pada rekaman ini berada dalam batas wajar alami. "
-                "Tidak ditemukan indikasi sintesis vokal AI yang signifikan maupun kata kunci penipuan bertekanan tinggi. "
-                "Situasi terindikasi aman."
+                "Pola vokal, modulasi nada, dan struktur gelombang suara pada rekaman ini terindikasi sebagai suara manusia alami (bukan kloning/sintesis AI). "
+                "Tidak ditemukan indikasi manipulasi suara sintetis yang mencolok."
             )
 
     elif content_type in ["video"]:
@@ -245,10 +217,6 @@ def translate_risk(
     if intent_summary:
         tech_lines.append(f"• Konteks Niat: {intent_summary}")
 
-    # Transcribed Text for Voice Calls (Technical record in accordion)
-    if transcribed_text:
-        tech_lines.append(f'• Transkripsi Percakapan (Whisper ASR): "{transcribed_text}"')
-    
     if "fake_probability" in metadata:
         tech_lines.append(f"• Skor Probabilitas Deepfake (Akustik): {metadata['fake_probability']:.1%}")
     if "content_scam_score" in metadata and metadata["content_scam_score"] is not None:

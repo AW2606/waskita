@@ -24,11 +24,14 @@ import {
   Video,
   Share2,
   Sparkles,
+  Flag,
+  Users,
+  X,
 } from "lucide-react";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { ClarityGauge } from "@/components/ClarityGauge";
-import { getVerification, submitVerificationFeedback, VerificationData } from "@/lib/api";
+import { getVerification, submitVerificationFeedback, reportNumber, getReportCount, VerificationData } from "@/lib/api";
 
 function HasilContent() {
   const searchParams = useSearchParams();
@@ -43,6 +46,14 @@ function HasilContent() {
   const [feedbackSubmitted, setFeedbackSubmitted] = useState<boolean>(false);
   const [feedbackIsPositive, setFeedbackIsPositive] = useState<boolean | null>(null);
   const [feedbackLoading, setFeedbackLoading] = useState<boolean>(false);
+
+  // Report Number State
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportReason, setReportReason] = useState("");
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportSubmitted, setReportSubmitted] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [communityReportCount, setCommunityReportCount] = useState<number>(0);
 
   const token = (session as unknown as { accessToken?: string })?.accessToken;
 
@@ -88,6 +99,41 @@ function HasilContent() {
 
     loadData();
   }, [verificationId, token]);
+
+  // Extract phone number from technical_detail for report feature
+  const extractedPhone = React.useMemo(() => {
+    if (!data) return "";
+    const ct = data.content_type?.toLowerCase();
+    if (ct !== "telepon" && ct !== "phone_number") return "";
+    const techStr = data.technical_detail || "";
+    const match = techStr.match(/Nomor Terperiksa:\s*([^\n•]+)/);
+    return match ? match[1].trim() : "";
+  }, [data]);
+
+  // Fetch community report count when phone number is available
+  useEffect(() => {
+    if (!extractedPhone) return;
+    getReportCount(extractedPhone).then((res) => {
+      setCommunityReportCount(res.report_count);
+    });
+  }, [extractedPhone]);
+
+  const handleReportSubmit = async () => {
+    if (!extractedPhone || !reportReason.trim() || !token) return;
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      const result = await reportNumber(extractedPhone, reportReason.trim(), token);
+      setReportSubmitted(true);
+      setCommunityReportCount(result.report_count);
+      setShowReportModal(false);
+      setReportReason("");
+    } catch (err: unknown) {
+      setReportError(err instanceof Error ? err.message : "Gagal mengirim laporan.");
+    } finally {
+      setReportLoading(false);
+    }
+  };
 
   const handleFeedback = async (isPositive: boolean) => {
     if (!data?.id || feedbackSubmitted) return;
@@ -300,16 +346,16 @@ function HasilContent() {
             </div>
           )}
 
-          {/* Intent-Gated Discourse & Context Classification Card (XAI) */}
-          {(extractedInfo.intentLabel || data.content_type.toLowerCase() === "suara" || data.content_type.toLowerCase() === "pesan") && (
+          {/* Context & Threat Indicators Card (XAI) */}
+          {(extractedInfo.intentLabel || extractedInfo.detectedKeywords || data.content_type.toLowerCase() === "pesan") && (
             <div className="p-6 rounded-2xl bg-white border border-primary/20 shadow-2xs space-y-3.5">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-display font-semibold text-base text-ink flex items-center gap-2">
                   <Sparkles className="w-4 h-4 text-primary" />
-                  Klasifikasi Niat & Konteks Pembicaraan:
+                  Klasifikasi Niat & Konteks Analisis:
                 </h3>
                 <span className="font-mono text-xs px-2.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                  Intent-Gated XAI
+                  Explainable AI (XAI)
                 </span>
               </div>
 
@@ -317,14 +363,14 @@ function HasilContent() {
                 <div className="font-display font-semibold text-sm sm:text-base text-ink flex items-center gap-2">
                   <ShieldCheck className="w-4 h-4 text-primary shrink-0" />
                   <span>
-                    {extractedInfo.intentLabel || (data.risk_level === "tenang" ? "Narasi Edukasi & Informasi Publik (Bukan Serangan Langsung)" : "Analisis Struktur Niat & Percakapan")}
+                    {extractedInfo.intentLabel || (data.risk_level === "tenang" ? "Konteks Media Wajar / Alami" : "Analisis Struktur Niat & Modus")}
                   </span>
                 </div>
                 <p className="font-body text-xs sm:text-sm text-ink/80 leading-relaxed">
                   {extractedInfo.intentSummary ||
                     (data.risk_level === "tenang"
-                      ? "Konten teridentifikasi sebagai narasi informasi / edukasi pencegahan penipuan, bukan instruksi yang mendesak Anda melakukan transaksi secara langsung."
-                      : "Sistem mendeteksi struktur kalimat untuk memastikan apakah ada desakan tindakan transfer dana, kode OTP, atau isolasi kontak.")}
+                      ? "Tidak ditemukan indikator desakan kejahatan digital maupun manipulasi neural berbahaya pada sampel ini."
+                      : "Sistem memeriksa indikator pola manipulasi buatan dan desakan tindakan berisiko.")}
                 </p>
               </div>
 
@@ -468,6 +514,60 @@ function HasilContent() {
             </div>
           )}
 
+          {/* Community Report Count Badge (Phone Number Results Only) */}
+          {extractedPhone && communityReportCount > 0 && (
+            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-3.5">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-700 flex items-center justify-center shrink-0">
+                <Users className="w-5 h-5" />
+              </div>
+              <div className="space-y-0.5 flex-1">
+                <span className="font-mono text-xs text-amber-800 uppercase tracking-wider font-semibold block">
+                  Laporan Komunitas
+                </span>
+                <p className="font-body text-sm text-ink/90 leading-relaxed">
+                  Nomor <span className="font-mono font-semibold">{extractedPhone}</span> telah dilaporkan oleh <span className="font-semibold text-amber-800">{communityReportCount} pengguna</span> lain sebagai nomor mencurigakan.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Report This Number Button (Phone Number Results Only) */}
+          {extractedPhone && (
+            <div className="p-5 rounded-2xl bg-mist/60 border border-muted/30 flex flex-col sm:flex-row items-center justify-between gap-4">
+              <div className="space-y-0.5 text-center sm:text-left">
+                <h4 className="font-display font-semibold text-sm text-ink flex items-center justify-center sm:justify-start gap-1.5">
+                  <Flag className="w-4 h-4 text-caution" />
+                  Nomor Ini Mencurigakan?
+                </h4>
+                <p className="font-body text-xs text-muted">
+                  Bantu lindungi komunitas dengan melaporkan nomor ini.
+                </p>
+              </div>
+
+              {reportSubmitted ? (
+                <div className="inline-flex items-center gap-1.5 text-xs font-body text-primary font-semibold bg-primary/10 px-3.5 py-1.5 rounded-xl animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Laporan berhasil dikirim!</span>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!token) {
+                      alert("Silakan login terlebih dahulu untuk melaporkan nomor.");
+                      return;
+                    }
+                    setShowReportModal(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white hover:bg-caution/10 text-ink hover:text-caution border border-muted/30 text-sm font-body font-medium transition-colors cursor-pointer shadow-2xs"
+                >
+                  <Flag className="w-4 h-4" />
+                  <span>Laporkan Nomor Ini</span>
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Bottom Actions */}
           <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-muted/20">
             <Link
@@ -486,6 +586,93 @@ function HasilContent() {
             </Link>
           </div>
         </div>
+
+        {/* Report Number Modal Overlay */}
+        {showReportModal && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200"
+            onClick={() => setShowReportModal(false)}
+          >
+            <div
+              className="bg-white rounded-3xl shadow-xl w-full max-w-md p-6 sm:p-8 space-y-5 relative"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                onClick={() => setShowReportModal(false)}
+                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-mist hover:bg-muted/30 flex items-center justify-center text-muted hover:text-ink transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+
+              <div className="space-y-1">
+                <h3 className="font-display font-semibold text-xl text-ink flex items-center gap-2">
+                  <Flag className="w-5 h-5 text-caution" />
+                  Laporkan Nomor Mencurigakan
+                </h3>
+                <p className="font-body text-sm text-muted">
+                  Nomor: <span className="font-mono font-semibold text-ink">{extractedPhone}</span>
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label htmlFor="report-reason" className="font-body text-sm font-medium text-ink block">
+                  Alasan Pelaporan <span className="text-caution">*</span>
+                </label>
+                <textarea
+                  id="report-reason"
+                  value={reportReason}
+                  onChange={(e) => setReportReason(e.target.value)}
+                  placeholder="Contoh: Nomor ini menelepon mengaku sebagai polisi dan meminta transfer uang..."
+                  rows={3}
+                  maxLength={500}
+                  className="w-full px-4 py-3 rounded-xl border border-muted/40 bg-mist/50 font-body text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 resize-none transition-all"
+                />
+                <p className="font-mono text-xs text-muted text-right">
+                  {reportReason.length}/500
+                </p>
+              </div>
+
+              {reportError && (
+                <div className="p-3 rounded-xl bg-caution/10 border border-caution/30 text-xs font-body text-caution font-medium">
+                  {reportError}
+                </div>
+              )}
+
+              <div className="flex items-center gap-3 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowReportModal(false)}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-muted/30 text-ink font-body text-sm font-medium hover:bg-mist transition-colors cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReportSubmit}
+                  disabled={reportLoading || reportReason.trim().length < 5}
+                  className="flex-1 px-4 py-2.5 rounded-xl bg-caution text-white font-body text-sm font-semibold hover:bg-caution/90 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5"
+                >
+                  {reportLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Mengirim...
+                    </>
+                  ) : (
+                    <>
+                      <Flag className="w-4 h-4" />
+                      Kirim Laporan
+                    </>
+                  )}
+                </button>
+              </div>
+
+              <p className="font-body text-xs text-muted text-center leading-relaxed">
+                🛡️ Identitas pelapor bersifat rahasia dan tidak akan ditampilkan kepada pengguna lain.
+              </p>
+            </div>
+          </div>
+        )}
       </main>
 
       <Footer />

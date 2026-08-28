@@ -182,33 +182,25 @@ def classify_discourse_intent(text: str) -> Dict[str, Any]:
     attack_count = len(direct_attack_matches)
 
     # Classification Logic
-    if edu_count >= 2 and attack_count == 0:
-        intent_frame = "edukasi_informasi"
-        intent_multiplier = 0.10  # Damping multiplier: suppresses false positives by 90%
-        intent_label = "Narasi Edukasi & Peringatan Modus Penipuan (Bukan Serangan Langsung)"
-        context_summary = (
-            "Konten terdeteksi sebagai narasi edukasi / tips pencegahan modus penipuan, "
-            "bukan instruksi jahat yang menuntut tindakan dari Anda secara langsung."
-        )
-    elif edu_count > attack_count and edu_count >= 3:
-        intent_frame = "edukasi_informasi"
-        intent_multiplier = 0.15
-        intent_label = "Narasi Edukasi & Informasi Publik"
-        context_summary = (
-            "Konten memuat penjelasan tentang modus kejahatan dalam kerangka edukasi dan kewaspadaan publik."
-        )
-    elif attack_count >= 1:
+    if attack_count >= 1:
         intent_frame = "serangan_langsung"
         intent_multiplier = 1.0  # Full threat escalation
         intent_label = "Instruksi Desakan / Percakapan Berbahaya Langsung (Direct Attack)"
         context_summary = (
             "Kalimat menggunakan kata kerja imperatif langsung yang menuntut transfer, kode OTP, atau isolasi kontak."
         )
+    elif edu_count >= 3 and attack_count == 0 and ("tips pencegahan" in raw_lower or "cara mencegah" in raw_lower or "ciri-ciri penipuan" in raw_lower):
+        intent_frame = "edukasi_informasi"
+        intent_multiplier = 0.20
+        intent_label = "Narasi Edukasi & Peringatan Modus Penipuan (Bukan Serangan Langsung)"
+        context_summary = (
+            "Konten terdeteksi sebagai narasi edukasi / tips pencegahan modus penipuan publik."
+        )
     else:
         intent_frame = "netral_ambigu"
-        intent_multiplier = 0.50
+        intent_multiplier = 1.0
         intent_label = "Percakapan Biasa / Konteks Netral"
-        context_summary = "Tidak ditemukan pola kalimat penyerangan langsung maupun indikator edukasi yang menonjol."
+        context_summary = "Tidak ditemukan pola kalimat penyerangan langsung."
 
     return {
         "intent_frame": intent_frame,

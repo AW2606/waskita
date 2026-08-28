@@ -93,84 +93,40 @@ async def create_verification(
                 result = translate_risk(raw_score, "audio", meta)
             else:
                 try:
-                    audio_16k, duration_sec = model_mgr.decode_and_resample_audio(file_bytes)
+                    audio_16k, duration_sec = model_mgr.decode_and_resample_audio(file_bytes, filename)
                 except Exception as decode_err:
+                    logger.warning(f"Audio decode error: {decode_err}")
                     audio_16k = None
                     duration_sec = 0.0
 
                 if audio_16k is None:
                     result = {
-                        "risk_level": "perlu_diperiksa",
-                        "score": 50,
+                        "risk_level": "tidak_dapat_diperiksa",
+                        "score": 0,
                         "explanation": (
-                            "Kami tidak dapat memeriksa rekaman suara ini dengan yakin karena format atau kualitas audio "
-                            "tidak terbaca secara optimal. Sebaiknya lakukan verifikasi manual langsung dengan pihak terkait "
-                            "melalui saluran komunikasi resmi."
+                            "Kami tidak dapat memeriksa rekaman suara ini karena format file tidak dapat didekode oleh sistem. "
+                            "Sistem TIDAK DAPAT memastikan keaslian rekaman ini — sangat disarankan untuk melakukan verifikasi manual langsung."
                         ),
                         "technical_detail": (
                             "• Status: Gagal memproses file audio.\n"
-                            "• Keterangan Sistem: Format audio tidak didukung atau rusak.\n"
+                            "• Keterangan Sistem: Format audio tidak didukung atau header file rusak.\n"
                             "• Kebijakan Privasi: File audio telah dihapus seketika dari memori server (Zero Retention)."
                         ),
                     }
                 else:
-                    # Parallel Execution: Whisper ASR + Acoustic Deepfake Forensics
-                    acoustic_task = asyncio.to_thread(
+                    # High-Performance Voice Biometrics & Acoustic Deepfake Forensics
+                    acoustic_score, acoustic_meta = await asyncio.to_thread(
                         model_mgr.predict_audio_acoustic, audio_16k, duration_sec
                     )
-                    transcribe_task = asyncio.to_thread(
-                        model_mgr.transcribe_audio_speech, audio_16k
-                    )
 
-                    (acoustic_score, acoustic_meta), transcribed_text = await asyncio.gather(
-                        acoustic_task, transcribe_task
-                    )
-
-                    acoustic_meta["transcribed_text"] = transcribed_text
-
-                    # Spoken Content Analysis from Transcribed Speech (Intent-Gated)
-                    content_score, content_meta = scan_text(transcribed_text) if transcribed_text else (0.1, {})
-
-                    intent_frame = content_meta.get("intent_frame", "netral_ambigu")
-
-                    # Calibrated Intent-Gated Multi-Factor Fusion Score
+                    # Primary Ground Truth: Acoustic Deepfake & Synthetic Voice Biometrics
                     if acoustic_score is None:
                         fused_score = None
                         acoustic_meta["status"] = "tidak_dapat_diperiksa"
-                    elif intent_frame == "edukasi_informasi":
-                        # Content is educational awareness / tips -> Safe from fraud risk (Tenang)
-                        fused_score = min(0.20, content_score)
-                    elif intent_frame == "serangan_langsung":
-                        # Direct imperative scam attack
-                        fused_score = max(acoustic_score, content_score)
-                        if acoustic_score >= 0.45:
-                            fused_score = min(0.98, fused_score + 0.15)
                     else:
-                        # Ambiguous / neutral
-                        if acoustic_score >= 0.60 and content_score >= 0.40:
-                            fused_score = min(0.95, max(acoustic_score, content_score))
-                        elif acoustic_score >= 0.60:
-                            fused_score = 0.35  # AI voice detected, but neutral content
-                        else:
-                            fused_score = content_score
+                        fused_score = acoustic_score
 
-                    # Merge all rich metadata
-                    merged_meta = {
-                        **acoustic_meta,
-                        "content_scam_score": content_score,
-                        "intent_frame": intent_frame,
-                        "intent_label": content_meta.get("intent_label", ""),
-                        "intent_summary": content_meta.get("intent_summary", ""),
-                        "matched_keywords": content_meta.get("matched_keywords", []),
-                        "matched_clusters": content_meta.get("matched_clusters", []),
-                        "cluster_labels": content_meta.get("cluster_labels", []),
-                        "detected_links": content_meta.get("detected_links", []),
-                        "link_risk_score": content_meta.get("link_risk_score", 0.0),
-                    }
-                    if content_meta.get("notes"):
-                        merged_meta["notes"] = (merged_meta.get("notes") or []) + content_meta["notes"]
-
-                    result = translate_risk(fused_score, "audio", merged_meta)
+                    result = translate_risk(fused_score, "audio", acoustic_meta)
 
         # -------------------------------------------------------------------------
         # Track 1: Video Verification (ViT + Temporal Forensics + Recompression)

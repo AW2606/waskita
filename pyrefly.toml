@@ -1,8 +1,8 @@
 venv = ".venv"
 python = ".venv/Scripts/python.exe"
-search_paths = [
-    "c:\\Users\\Adhitya Warman\\Desktop\\WASKITA",
+search_path = [
     ".",
+    "src",
     ".venv/Lib/site-packages"
 ]
-project_root = "c:\\Users\\Adhitya Warman\\Desktop\\WASKITA"
+project_root = "."

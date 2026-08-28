@@ -821,3 +821,74 @@ export async function answerScenario(
     explanation: scenario.explanation,
   };
 }
+
+// -----------------------------------------------------------------------------
+// Phone Number Community Reporting
+// -----------------------------------------------------------------------------
+
+export interface ReportNumberResponse {
+  status: string;
+  message: string;
+  phone_number: string;
+  report_count: number;
+}
+
+export interface ReportCountResponse {
+  phone_number: string;
+  report_count: number;
+}
+
+/**
+ * Report a phone number as suspicious (requires authentication)
+ */
+export async function reportNumber(
+  phoneNumber: string,
+  reason: string,
+  token: string
+): Promise<ReportNumberResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/report-number`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      phone_number: phoneNumber,
+      reason: reason,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || "Gagal mengirim laporan nomor.");
+  }
+
+  return response.json();
+}
+
+/**
+ * Get community report count for a phone number (public, no auth needed)
+ */
+export async function getReportCount(phoneNumber: string): Promise<ReportCountResponse> {
+  try {
+    const encoded = encodeURIComponent(phoneNumber.trim().replace(/\s/g, "").replace(/-/g, ""));
+    const response = await fetch(`${API_BASE_URL}/api/report-number/${encoded}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      cache: "no-store",
+    });
+
+    if (response.ok) {
+      return response.json();
+    }
+  } catch (err) {
+    console.warn("Backend getReportCount failed:", err);
+  }
+
+  return {
+    phone_number: phoneNumber,
+    report_count: 0,
+  };
+}

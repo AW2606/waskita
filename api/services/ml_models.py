@@ -11,6 +11,7 @@ import cv2
 from PIL import Image, ImageOps
 import torch
 import scipy.signal as signal
+import joblib
 
 logger = logging.getLogger("waskita.ml_models")
 
@@ -219,49 +220,284 @@ def resample_audio(audio_data: np.ndarray, orig_sr: int, target_sr: int = 16000)
     return resampled.astype(np.float32)
 
 
+def compute_fft_spectral_anomaly(gray_frame: np.ndarray) -> float:
+    """
+    Computes 2D Fast Fourier Transform Azimuthal Power Spectrum Anomaly.
+    GAN/Diffusion/FaceFusion generated faces exhibit high-frequency grid periodicities
+    and abnormal power distribution in the frequency domain.
+    """
+    if gray_frame.shape[0] < 32 or gray_frame.shape[1] < 32:
+        return 0.0
+    
+    h, w = gray_frame.shape
+    win_y = np.hanning(h)
+    win_x = np.hanning(w)
+    window_2d = np.outer(win_y, win_x)
+    windowed = gray_frame * window_2d
+    
+    f = np.fft.fft2(windowed)
+    fshift = np.fft.fftshift(f)
+    magnitude_spectrum = np.abs(fshift) + 1e-9
+    power_spectrum = magnitude_spectrum ** 2
+    
+    center_y, center_x = h // 2, w // 2
+    y, x = np.ogrid[:h, :w]
+    r = np.sqrt((x - center_x)**2 + (y - center_y)**2).astype(int)
+    
+    max_r = min(center_y, center_x)
+    if max_r < 10:
+        return 0.0
+    
+    radial_energy = np.bincount(r.ravel(), weights=power_spectrum.ravel())[:max_r]
+    radial_counts = np.bincount(r.ravel())[:max_r] + 1e-9
+    radial_profile = radial_energy / radial_counts
+    
+    high_band = np.mean(radial_profile[int(max_r * 0.6):])
+    mid_band = np.mean(radial_profile[int(max_r * 0.2):int(max_r * 0.5)]) + 1e-9
+    ratio = float(high_band / mid_band)
+    
+    return float(np.clip(ratio * 5.0, 0.0, 1.0))
+
+
+def extract_face_roi_smart(pil_img: Image.Image) -> Tuple[Tuple[int, int, int, int], Any, bool]:
+    """
+    Robust morphological skin-locus face localization for forensic analysis.
+    Uses YCrCb color space skin detection + contour analysis to locate the primary face region.
+    Returns: (bbox_tuple (x1,y1,x2,y2), contour_or_None, is_face_found)
+    """
+    img_rgb = np.array(pil_img.convert("RGB"))
+    h, w, _ = img_rgb.shape
+    ycrcb = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2YCrCb)
+    cr = ycrcb[:, :, 1]
+    cb = ycrcb[:, :, 2]
+    skin_mask = ((cr >= 130) & (cr <= 178) & (cb >= 75) & (cb <= 132)).astype(np.uint8) * 255
+
+    k_size = max(5, int(min(h, w) * 0.03))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
+    skin_closed = cv2.morphologyEx(skin_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    skin_opened = cv2.morphologyEx(skin_closed, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    contours, _ = cv2.findContours(skin_opened, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    best_bbox = None
+    best_cnt = None
+    max_score = 0
+    total_area = h * w
+
+    for cnt in contours:
+        x, y, bw, bh = cv2.boundingRect(cnt)
+        area = bw * bh
+        if area < total_area * 0.02 or area > total_area * 0.90:
+            continue
+        aspect_ratio = float(bh) / max(1, bw)
+        if 0.7 <= aspect_ratio <= 2.2:
+            center_y = y + bh / 2.0
+            if center_y < h * 0.85:
+                score = area * (1.0 - abs(1.3 - aspect_ratio) * 0.3)
+                if score > max_score:
+                    max_score = score
+                    best_bbox = (x, y, bw, bh)
+                    best_cnt = cnt
+
+    if best_bbox is not None:
+        x, y, bw, bh = best_bbox
+        pad_x = int(bw * 0.20)
+        pad_y = int(bh * 0.20)
+        x1 = max(0, x - pad_x)
+        y1 = max(0, y - pad_y)
+        x2 = min(w, x + bw + pad_x)
+        y2 = min(h, y + bh + pad_y)
+        return (x1, y1, x2, y2), best_cnt, True
+    else:
+        y1, y2 = int(h * 0.05), int(h * 0.75)
+        x1, x2 = int(w * 0.15), int(w * 0.85)
+        return (x1, y1, x2, y2), None, False
+
+
+def compute_ela_face_score(pil_img: Image.Image, bbox: Tuple[int, int, int, int]) -> float:
+    """
+    Error Level Analysis (ELA): Re-compress at known JPEG quality and compare pixel differences.
+    Manipulated (face-swapped) regions exhibit different compression artifact patterns.
+    Returns the mean ELA value of the face region.
+    """
+    buf = io.BytesIO()
+    pil_img.convert("RGB").save(buf, format="JPEG", quality=90)
+    buf.seek(0)
+    recomp = np.array(Image.open(buf).convert("RGB")).astype(np.float64)
+    orig = np.array(pil_img.convert("RGB")).astype(np.float64)
+    ela_diff = np.abs(orig - recomp)
+
+    x1, y1, x2, y2 = bbox
+    face_ela = float(np.mean(ela_diff[y1:y2, x1:x2]))
+    return face_ela
+
+
+def compute_noise_face_ratio(img_rgb: np.ndarray, bbox: Tuple[int, int, int, int]) -> float:
+    """
+    Estimates noise inconsistency between face and background regions.
+    Uses MAD (Median Absolute Deviation) of Laplacian high-pass filter.
+    Face-swapped regions often have different noise characteristics than the original background.
+    """
+    gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY).astype(np.float64)
+    hp = cv2.Laplacian(gray, cv2.CV_64F)
+    h, w = gray.shape
+
+    x1, y1, x2, y2 = bbox
+    face_hp = hp[y1:y2, x1:x2]
+    face_noise = float(np.median(np.abs(face_hp))) * 1.4826
+
+    bg_regions = []
+    if y1 > 20:
+        bg_regions.append(hp[:y1].ravel())
+    if y2 < h - 20:
+        bg_regions.append(hp[y2:].ravel())
+    if x1 > 20:
+        bg_regions.append(hp[y1:y2, :x1].ravel())
+    if x2 < w - 20:
+        bg_regions.append(hp[y1:y2, x2:].ravel())
+
+    if bg_regions and sum(len(r) for r in bg_regions) > 100:
+        bg_all = np.concatenate(bg_regions)
+        bg_noise = float(np.median(np.abs(bg_all))) * 1.4826
+    else:
+        return 0.0
+
+    max_noise = max(face_noise, bg_noise)
+    if max_noise < 0.5:
+        return 0.0
+    return abs(face_noise - bg_noise) / (max_noise + 1e-5)
+
+
+def extract_comprehensive_acoustic_features(audio_16k: np.ndarray) -> np.ndarray:
+    """
+    Extracts a 60-dimensional acoustic feature vector from 16kHz audio array:
+    - 13 MFCCs (mean & std) = 26 features
+    - 13 Delta-MFCCs (mean & std) = 26 features
+    - Spectral Centroid, Bandwidth, Rolloff, Flatness (mean) = 4 features
+    - Zero Crossing Rate (mean & std) = 2 features
+    - Pitch Jitter & Shimmer = 2 features
+    """
+    if len(audio_16k) < 1600:
+        return np.zeros(60, dtype=np.float32)
+
+    max_val = np.max(np.abs(audio_16k)) + 1e-9
+    x = (audio_16k / max_val).astype(np.float64)
+    n = len(x)
+
+    nperseg = min(512, n)
+    noverlap = min(384, nperseg // 2)
+    f, t, Zxx = signal.stft(x, fs=16000, nperseg=nperseg, noverlap=noverlap)
+    mag = np.abs(Zxx) + 1e-12
+    power = mag ** 2
+
+    def hz_to_mel(hz): return 2595.0 * np.log10(1.0 + hz / 700.0)
+    def mel_to_hz(mel): return 700.0 * (10.0**(mel / 2595.0) - 1.0)
+
+    low_mel = hz_to_mel(80.0)
+    high_mel = hz_to_mel(7600.0)
+    mel_points = np.linspace(low_mel, high_mel, 28)
+    hz_points = mel_to_hz(mel_points)
+    bin_points = np.floor((nperseg + 1) * hz_points / 16000.0).astype(int)
+
+    fbank = np.zeros((26, nperseg // 2 + 1))
+    for m in range(1, 27):
+        f_m_minus = bin_points[m - 1]
+        f_m = bin_points[m]
+        f_m_plus = bin_points[m + 1]
+        for k in range(f_m_minus, f_m):
+            if f_m != f_m_minus and k < fbank.shape[1]:
+                fbank[m - 1, k] = (k - f_m_minus) / (f_m - f_m_minus)
+        for k in range(f_m, f_m_plus):
+            if f_m_plus != f_m and k < fbank.shape[1]:
+                fbank[m - 1, k] = (f_m_plus - k) / (f_m_plus - f_m)
+
+    mel_energy = np.dot(fbank, power)
+    mel_energy = np.where(mel_energy == 0, 1e-12, mel_energy)
+    log_mel = np.log(mel_energy)
+
+    mfcc = np.zeros((13, log_mel.shape[1]))
+    for i in range(13):
+        mfcc[i, :] = np.sum(log_mel * np.cos(np.pi * i * (np.arange(26) + 0.5) / 26)[:, None], axis=0)
+
+    mfcc_mean = np.mean(mfcc, axis=1)
+    mfcc_std = np.std(mfcc, axis=1)
+
+    delta_mfcc = np.diff(mfcc, axis=1, prepend=mfcc[:, :1])
+    delta_mean = np.mean(delta_mfcc, axis=1)
+    delta_std = np.std(delta_mfcc, axis=1)
+
+    spectral_centroid = np.sum(f[:, None] * mag, axis=0) / np.sum(mag, axis=0)
+    sc_mean = np.mean(spectral_centroid)
+
+    spectral_bw = np.sqrt(np.sum(((f[:, None] - spectral_centroid)**2) * mag, axis=0) / np.sum(mag, axis=0))
+    sbw_mean = np.mean(spectral_bw)
+
+    cum_power = np.cumsum(power, axis=0)
+    rolloff_idx = np.apply_along_axis(lambda col: np.searchsorted(col, 0.85 * col[-1]), axis=0, arr=cum_power)
+    rolloff_mean = np.mean(f[rolloff_idx])
+
+    geo_mean = np.exp(np.mean(np.log(power), axis=0))
+    arith_mean = np.mean(power, axis=0)
+    flatness_mean = np.mean(geo_mean / arith_mean)
+
+    zcr = np.mean(np.abs(np.diff(np.sign(x))))
+    zcr_var = np.var([np.mean(np.abs(np.diff(np.sign(x[i:i+320])))) for i in range(0, n-320, 320)]) if n > 320 else 0.0
+
+    min_lag, max_lag = int(16000 / 400), int(16000 / 75)
+    f_size, h_size = 480, 160
+    lags, e_chunks = [], []
+    for i in range(0, n - f_size, h_size):
+        chunk = x[i:i+f_size]
+        e = float(np.sum(chunk**2) / f_size)
+        if e > 0.001:
+            corr = np.correlate(chunk, chunk, mode="full")[f_size - 1:]
+            if len(corr) > max_lag:
+                sr = corr[min_lag:max_lag]
+                peak = min_lag + int(np.argmax(sr))
+                if corr[peak] / (corr[0] + 1e-9) > 0.25:
+                    lags.append(float(peak))
+                    e_chunks.append(e)
+
+    jitter = float(np.mean(np.abs(np.diff(lags))) / np.mean(lags) * 100.0) if len(lags) >= 5 else 1.5
+    shimmer = float(np.mean(np.abs(np.diff(e_chunks))) / np.mean(e_chunks) * 100.0) if len(e_chunks) >= 5 else 5.0
+
+    features = np.concatenate([
+        mfcc_mean,
+        mfcc_std,
+        delta_mean,
+        delta_std,
+        [sc_mean, sbw_mean, rolloff_mean, flatness_mean],
+        [zcr, zcr_var],
+        [jitter, shimmer],
+    ])
+    return features.astype(np.float32)
+
+
 def extract_acoustic_forensics(audio_16k: np.ndarray) -> Dict[str, Any]:
     """
-    Advanced Multi-Feature Acoustic Forensics Engine (v2.5):
-    - Exact Digital Silence & Noise Floor Entropy Analysis (Distinguishes analog ADC microphone thermal noise from pure mathematical digital zero pauses)
-    - HiFi-GAN / VITS Neural Vocoder Mid-Band Formant Energy Concentration & Spectral Centroid
-    - Voiced Segment Harmonic-to-Noise Ratio (HNR) and Pitch Jitter Perturbation
-    - Spectral Rolloff and Nyquist Energy Decay Profile
+    Continuous Acoustic Forensics & Spectral Metrics.
     """
     if len(audio_16k) < 1600:
         return {
-            "synthetic_score_modifier": 0.0,
+            "continuous_prob": 0.5,
             "spectral_rolloff_hz": 8000,
             "spectral_centroid_hz": 1200,
             "silence_ratio": 0.0,
             "pitch_jitter_pct": 1.5,
-            "notes": ["Sampel audio terlalu pendek untuk analisis spektral mendalam."],
+            "notes": ["Sampel audio terlalu pendek untuk analisis spektral."],
         }
 
-    # Normalize audio
     max_val = np.max(np.abs(audio_16k)) + 1e-9
     norm_audio = audio_16k / max_val
+    n_samples = len(norm_audio)
 
-    # 1. Exact Digital Silence & Noise Floor Entropy Analysis
-    exact_zero_ratio = float(np.sum(np.abs(norm_audio) < 1e-5) / len(norm_audio))
+    exact_zero_ratio = float(np.sum(np.abs(norm_audio) < 1e-5) / n_samples)
     
-    frame_len = 320  # 20ms window at 16kHz
-    frames = [norm_audio[i:i+frame_len] for i in range(0, len(norm_audio)-frame_len, frame_len)]
-    frame_energies = [float(np.mean(fr**2)) for fr in frames]
-    low_frames = [fr for fr, e in zip(frames, frame_energies) if e < np.percentile(frame_energies, 20)]
-    pause_noise_var = float(np.mean([np.var(fr) for fr in low_frames])) if low_frames else 1e-4
-
-    # 2. STFT Spectral Domain Analysis
-    nperseg = min(512, len(norm_audio))
+    nperseg = min(512, n_samples)
     f, t_spec, Zxx = signal.stft(norm_audio, fs=16000, nperseg=nperseg, noverlap=min(384, nperseg // 2))
     magnitude = np.abs(Zxx)
     power_spec = magnitude ** 2
 
-    # Mid-band vocoder formant concentration (1000Hz - 3500Hz) vs baseband
-    band_mid = float(np.sum(power_spec[(f >= 1000) & (f < 3500), :]))
-    total_energy = float(np.sum(power_spec)) + 1e-12
-    mid_energy_ratio = band_mid / total_energy
-
-    # Spectral Centroid & Rolloff
     spectral_centroid = np.sum(f[:, None] * magnitude, axis=0) / (np.sum(magnitude, axis=0) + 1e-12)
     mean_centroid = float(np.mean(spectral_centroid))
 
@@ -273,12 +509,8 @@ def extract_acoustic_forensics(audio_16k: np.ndarray) -> Dict[str, Any]:
     )
     mean_rolloff = float(np.mean(f[rolloff_indices]))
 
-    # 3. Voiced Pitch Jitter
-    min_lag = int(16000 / 400)
-    max_lag = int(16000 / 75)
-    f_size = 480
-    h_size = 160
-    
+    min_lag, max_lag = int(16000 / 400), int(16000 / 75)
+    f_size, h_size = 480, 160
     pitch_periods = []
     num_f = (len(norm_audio) - f_size) // h_size
     for i in range(max(0, num_f)):
@@ -292,110 +524,186 @@ def extract_acoustic_forensics(audio_16k: np.ndarray) -> Dict[str, Any]:
                     pitch_periods.append(float(peak_lag))
 
     pitch_jitter_pct = 1.6
-    is_voiced = len(pitch_periods) >= 4
-    if is_voiced:
+    if len(pitch_periods) >= 4:
         diffs = np.abs(np.diff(pitch_periods))
         mean_period = np.mean(pitch_periods)
         if mean_period > 0:
             pitch_jitter_pct = float((np.mean(diffs) / mean_period) * 100.0)
 
-    # 4. Multi-Evidence Accumulator (Acoustic Forensic Weights)
-    ai_points = 0.0
-    human_points = 0.0
     forensic_notes = []
+    if exact_zero_ratio > 0.04:
+        forensic_notes.append(f"Jeda Hening Digital Mutlak ({exact_zero_ratio*100:.1f}% zero): Indikasi synthesizer TTS tanpa noise mikrofon fisik.")
+    else:
+        forensic_notes.append("Noise Lantai ADC/Ambiens Alami: Terdeteksi noise termal mikrofon fisik kontinu.")
 
-    # Criterion A: Digital Silence & ADC Noise Floor (Primary Hardware Discriminator)
-    if exact_zero_ratio > 0.04 or pause_noise_var < 8e-7:
-        ai_points += 0.45
-        forensic_notes.append(f"Jeda Hening Digital Mutlak ({exact_zero_ratio*100:.1f}% zero): Indikasi kuat synthesizer TTS tanpa noise mikrofon fisik.")
-    elif pause_noise_var >= 4e-6 and exact_zero_ratio < 0.02:
-        human_points += 0.45
-        forensic_notes.append("Noise Lantai ADC/Ambiens Alami: Terdeteksi noise termal mikrofon kontinu.")
-
-    # Criterion B: Vocoder Mid-Band Energy Profile (HiFi-GAN / Neural Vocoder Signature)
-    if (exact_zero_ratio > 0.03 or pause_noise_var < 2e-6) and mid_energy_ratio > 0.020 and mean_centroid > 1100:
-        ai_points += 0.30
+    if mean_centroid > 1100:
         forensic_notes.append(f"Konsentrasi Formant Vocoder (Centroid: {int(mean_centroid)}Hz): Karakteristik neural vocoder HiFi-GAN/VITS.")
-    elif mean_centroid < 800:
-        human_points += 0.25
+    else:
         forensic_notes.append(f"Distribusi Spektral Alami: Centroid rendah ({int(mean_centroid)}Hz) konsisten dengan vokal manusia.")
 
-    # Criterion C: Spectral Rolloff Profile
-    if (exact_zero_ratio > 0.03 or pause_noise_var < 2e-6) and 900 <= mean_rolloff <= 2200:
-        ai_points += 0.15
-        forensic_notes.append(f"Batas Rolloff Filter Spektral: {int(mean_rolloff)}Hz.")
-    elif mean_rolloff < 600:
-        human_points += 0.15
-
-    synthetic_score_modifier = round(ai_points - human_points, 3)
-
     return {
-        "synthetic_score_modifier": synthetic_score_modifier,
         "spectral_rolloff_hz": int(mean_rolloff),
         "spectral_centroid_hz": int(mean_centroid),
         "silence_ratio": round(exact_zero_ratio, 3),
         "exact_zero_ratio": round(exact_zero_ratio, 4),
-        "pause_noise_var": pause_noise_var,
         "pitch_jitter_pct": round(pitch_jitter_pct, 3),
-        "ai_points": round(ai_points, 2),
-        "human_points": round(human_points, 2),
         "notes": forensic_notes,
     }
 
 
+def analyze_facial_biometrics_and_seam(pil_img: Image.Image) -> Dict[str, Any]:
+    """
+    Analyzes skin color consistency (Face vs Neck) and boundary seam gradient.
+    Highly invariant to global video color grading, filters, and background bokeh.
+    """
+    img_np = np.array(pil_img)
+    if img_np.ndim != 3 or img_np.shape[2] < 3:
+        return {"anomaly_score": 0.08, "is_face_detected": False}
+
+    h, w, _ = img_np.shape
+    ycrcb = cv2.cvtColor(img_np, cv2.COLOR_RGB2YCrCb)
+    cr = ycrcb[:, :, 1]
+    cb = ycrcb[:, :, 2]
+
+    skin_mask = (cr >= 130) & (cr <= 175) & (cb >= 75) & (cb <= 130)
+    skin_ratio = float(np.mean(skin_mask))
+
+    if skin_ratio < 0.03:
+        return {"anomaly_score": 0.08, "is_face_detected": False, "skin_ratio": skin_ratio}
+
+    y_indices, _ = np.where(skin_mask)
+    y_min, y_max = int(np.min(y_indices)), int(np.max(y_indices))
+    y_mid = int(y_min + (y_max - y_min) * 0.55)
+
+    face_skin = skin_mask[:y_mid, :]
+    neck_skin = skin_mask[y_mid:, :]
+
+    face_cr = cr[:y_mid, :][face_skin]
+    neck_cr = cr[y_mid:, :][neck_skin]
+    face_cb = cb[:y_mid, :][face_skin]
+    neck_cb = cb[y_mid:, :][neck_skin]
+
+    chroma_discrepancy = 0.0
+    if len(face_cr) > 100 and len(neck_cr) > 100:
+        mean_face = np.array([np.mean(face_cr), np.mean(face_cb)])
+        mean_neck = np.array([np.mean(neck_cr), np.mean(neck_cb)])
+        chroma_discrepancy = float(np.linalg.norm(mean_face - mean_neck) / 25.0)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    face_mask_uint = (face_skin.astype(np.uint8)) * 255
+    dilated = cv2.dilate(face_mask_uint, kernel, iterations=2)
+    eroded = cv2.erode(face_mask_uint, kernel, iterations=2)
+    boundary_ring = (dilated > 0) & (eroded == 0)
+
+    gray = cv2.cvtColor(img_np[:y_mid, :], cv2.COLOR_RGB2GRAY)
+    lap = cv2.Laplacian(gray, cv2.CV_64F)
+    
+    boundary_grad = np.var(lap[boundary_ring]) if np.sum(boundary_ring) > 50 else 0.0
+    interior_grad = np.var(lap[face_skin]) if np.sum(face_skin) > 100 else 1.0
+
+    seam_ratio = float(boundary_grad / (interior_grad + 1e-5))
+    seam_score = 1.0 / (1.0 + np.exp(-2.5 * (seam_ratio - 2.6)))
+
+    anomaly_score = 0.5 * min(1.0, chroma_discrepancy) + 0.5 * seam_score
+    return {
+        "anomaly_score": float(np.clip(anomaly_score, 0.04, 0.96)),
+        "is_face_detected": True,
+        "chroma_discrepancy": round(chroma_discrepancy, 3),
+        "seam_ratio": round(seam_ratio, 3),
+    }
+
+
+def extract_comprehensive_video_features(
+    frames: List[Image.Image],
+    vit_scores: List[float],
+    forensics: Dict[str, Any]
+) -> np.ndarray:
+    """
+    Extracts a rich multi-dimensional forensic & neural vector from video frames.
+    """
+    seam_ratios = []
+    skin_cr_stds = []
+    skin_cb_stds = []
+    laplacian_vars = []
+
+    for f_img in frames:
+        f_rgb = f_img.convert("RGB")
+        f_np = np.array(f_rgb)[:, :, :3]
+
+        bio = analyze_facial_biometrics_and_seam(f_rgb)
+        seam_ratios.append(bio.get("seam_ratio", 1.0))
+
+        # Skin chromatic variance
+        ycrcb = cv2.cvtColor(f_np, cv2.COLOR_RGB2YCrCb)
+        cr = ycrcb[:, :, 1]
+        cb = ycrcb[:, :, 2]
+        skin_mask = (cr >= 130) & (cr <= 175) & (cb >= 75) & (cb <= 130)
+        if np.sum(skin_mask) > 100:
+            skin_cr_stds.append(float(np.std(cr[skin_mask])))
+            skin_cb_stds.append(float(np.std(cb[skin_mask])))
+        else:
+            skin_cr_stds.append(5.0)
+            skin_cb_stds.append(5.0)
+
+        gray = cv2.cvtColor(f_np, cv2.COLOR_RGB2GRAY)
+        laplacian_vars.append(float(cv2.Laplacian(gray, cv2.CV_64F).var()))
+
+    feats = [
+        float(np.mean(vit_scores)) if vit_scores else 0.5,
+        float(np.max(vit_scores)) if vit_scores else 0.5,
+        float(np.min(vit_scores)) if vit_scores else 0.5,
+        float(np.std(vit_scores)) if vit_scores else 0.0,
+        float(forensics.get("forensic_anomaly_score", 0.0)),
+        float(forensics.get("mean_temporal_diff", 0.0)),
+        float(forensics.get("temporal_anomaly", 0.0)),
+        float(forensics.get("blockiness_score", 0.0)),
+        float(np.mean(seam_ratios)) if seam_ratios else 1.0,
+        float(np.max(seam_ratios)) if seam_ratios else 1.0,
+        float(np.min(seam_ratios)) if seam_ratios else 1.0,
+        float(np.std(seam_ratios)) if seam_ratios else 0.0,
+        float(np.mean(skin_cr_stds)) if skin_cr_stds else 5.0,
+        float(np.mean(skin_cb_stds)) if skin_cb_stds else 5.0,
+        float(np.mean(laplacian_vars)) if laplacian_vars else 50.0,
+        float(np.std(laplacian_vars)) if laplacian_vars else 0.0,
+    ]
+    return np.array(feats, dtype=np.float32)
+
+
 def extract_video_forensics(frames: List[Image.Image]) -> Dict[str, Any]:
     """
-    Advanced Multi-Factor Video Forensics Engine (v3.0):
-    - Face-to-Context Sharpness Ratio (Laplacian Edge Variance): Detects face-swap boundary oversharpening / resample seams
-    - Chrominance Coherence (YCrCb Skin Tone Vector): Detects AI generator facial color palette deviations
-    - Optical Sensor Noise Residual: Measures CMOS thermal noise attenuation from neural reconstruction smoothing
-    - Temporal Consistency & Recompression Blockiness (WhatsApp / Medsos multi-generation compression)
+    Advanced Video Forensics Engine (Edit-Tolerant & Filter-Invariant):
+    - Facial Skin vs Neck Biometric Consistency
+    - Face Mask Boundary Seam Discontinuity
+    - 2D Fast Fourier Transform (FFT) Power Spectrum Grid Anomaly
+    - Temporal Consistency & Recompression Blockiness (WhatsApp / Medsos)
     """
     if len(frames) < 1:
         return {
             "temporal_anomaly": False,
             "recompression_detected": False,
             "forensic_anomaly_score": 0.0,
-            "sharpness_ratio": 0.0,
-            "chroma_ratio": 1.0,
-            "sensor_noise": 2.5,
             "notes": [],
         }
 
-    lap_ratios: List[float] = []
-    chroma_ratios: List[float] = []
-    noise_stds: List[float] = []
+    seam_anomalies: List[float] = []
+    fft_anomalies: List[float] = []
     frame_arrays: List[np.ndarray] = []
 
     for f_img in frames:
         np_rgb = np.array(f_img)
-        h, w = np_rgb.shape[:2]
         gray = cv2.cvtColor(np_rgb, cv2.COLOR_RGB2GRAY)
         frame_arrays.append(gray.astype(np.float32))
 
-        # 1. Face vs Background Sharpness Ratio (Center 40% face ROI vs Outer Context)
-        c_y1, c_y2 = int(h * 0.2), int(h * 0.6)
-        c_x1, c_x2 = int(w * 0.25), int(w * 0.75)
-        face_roi = gray[c_y1:c_y2, c_x1:c_x2]
-        outer_roi = gray[int(h * 0.7):, :]
+        # Facial biometrics & seam
+        bio = analyze_facial_biometrics_and_seam(f_img)
+        seam_anomalies.append(bio["anomaly_score"])
 
-        face_lap = float(cv2.Laplacian(face_roi, cv2.CV_64F).var()) if face_roi.size > 0 else 1.0
-        outer_lap = float(cv2.Laplacian(outer_roi, cv2.CV_64F).var()) if outer_roi.size > 0 else face_lap
-        lap_ratios.append(face_lap / (outer_lap + 1e-5))
+        # 2D FFT spectral anomaly
+        h, w = gray.shape
+        center_crop = gray[int(h * 0.2):int(h * 0.6), int(w * 0.25):int(w * 0.75)]
+        fft_anomalies.append(compute_fft_spectral_anomaly(center_crop if center_crop.size > 0 else gray))
 
-        # 2. Chrominance Coherence (YCrCb Color Palette Vector)
-        ycrcb = cv2.cvtColor(np_rgb, cv2.COLOR_RGB2YCrCb)
-        cr_face = ycrcb[c_y1:c_y2, c_x1:c_x2, 1]
-        cr_body = ycrcb[int(h * 0.65):, :, 1]
-        if cr_body.size > 0 and cr_face.size > 0:
-            chroma_ratios.append(float(np.std(cr_face) / (np.std(cr_body) + 1e-5)))
-
-        # 3. Optical Sensor Noise Residual (Gaussian Filter Difference)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        noise = gray.astype(float) - blurred.astype(float)
-        noise_stds.append(float(np.std(noise)))
-
-    # Temporal Inter-Frame Difference
+    # Temporal differences
     diffs = []
     if len(frame_arrays) >= 2:
         for i in range(len(frame_arrays) - 1):
@@ -404,7 +712,7 @@ def extract_video_forensics(frames: List[Image.Image]) -> Dict[str, Any]:
     mean_diff = float(np.mean(diffs)) if diffs else 0.0
     diff_variance = float(np.var(diffs)) if diffs else 0.0
 
-    # Blockiness / Multi-generation WhatsApp compression estimation
+    # WhatsApp blockiness
     block_discontinuities = []
     for arr in frame_arrays:
         if arr.shape[1] >= 16:
@@ -415,40 +723,24 @@ def extract_video_forensics(frames: List[Image.Image]) -> Dict[str, Any]:
             block_discontinuities.append(float(np.mean(horiz_diff)))
     mean_blockiness = float(np.mean(block_discontinuities)) if block_discontinuities else 0.0
 
-    avg_lap_ratio = float(np.mean(lap_ratios)) if lap_ratios else 0.0
-    avg_chroma_ratio = float(np.mean(chroma_ratios)) if chroma_ratios else 1.0
-    avg_noise = float(np.mean(noise_stds)) if noise_stds else 2.5
+    avg_seam_anomaly = float(np.mean(seam_anomalies)) if seam_anomalies else 0.1
+    avg_fft = float(np.mean(fft_anomalies)) if fft_anomalies else 0.0
 
     notes = []
     recompression_detected = False
     temporal_anomaly = False
-    forensic_anomaly_score = 0.0
 
-    # Forensic Criterion 1: Sharpness Ratio (Synthetic face over-sharpening / resample seams)
-    if avg_lap_ratio > 0.35:
-        forensic_anomaly_score += 0.45
-        notes.append(f"Anomali Ketajaman Wajah (Rasio: {avg_lap_ratio:.2f}): Terdeteksi diskontinuitas ketajaman topeng wajah terhadap fokus optik alami.")
-    elif avg_lap_ratio > 0.20:
-        forensic_anomaly_score += 0.25
-
-    # Forensic Criterion 2: Chrominance Coherence Mismatch
-    if avg_chroma_ratio > 1.15:
-        forensic_anomaly_score += 0.35
-        notes.append(f"Inkonsistensi Ruang Warna (Rasio: {avg_chroma_ratio:.2f}): Terdeteksi deviasi palet warna kulit wajah terhadap leher/tubuh.")
-    elif avg_chroma_ratio > 1.0:
-        forensic_anomaly_score += 0.15
-
-    # Forensic Criterion 3: Optical Sensor Noise Attenuation
-    if avg_noise < 2.20:
-        forensic_anomaly_score += 0.20
-        notes.append(f"Peredaman Noise Sensor (Std: {avg_noise:.2f}): Pola noise sensor CMOS kamera fisik teredam akibat rekonstruksi neural network.")
+    if avg_seam_anomaly > 0.50:
+        notes.append(f"Anomali Batas Topeng Wajah (Skor: {avg_seam_anomaly:.2f}): Terdeteksi diskontinuitas batas wajah khas face-swap neural.")
     else:
-        notes.append(f"Noise Sensor Alami (Std: {avg_noise:.2f}): Terdeteksi struktur noise sensor optik kamera fisik.")
+        notes.append("Konsistensi Biometrik Wajah & Leher: Distribusi warna dan gradien kontur wajah alami (toleran terhadap filter warna/efek video).")
 
-    # Forensic Criterion 4: Temporal Motion Jitter
+    if avg_fft > 0.35:
+        notes.append(f"Anomali Spektrum Frekuensi 2D: Terdeteksi artefak kisi rekonstruksi generator neural.")
+
     if mean_diff > 70.0 or diff_variance > 450.0:
         temporal_anomaly = True
-        notes.append("Catatan Forensik: Terdeteksi diskontinuitas pergerakan ekspresi wajah yang tidak stabil (indikasi warping antar-frame).")
+        notes.append("Catatan Forensik: Terdeteksi diskontinuitas pergerakan ekspresi wajah yang tidak stabil.")
     elif len(frames) > 1 and mean_diff <= 50.0 and diff_variance <= 300.0:
         notes.append("Catatan Forensik: Kontinuitas temporal stabil dan konsisten dengan pergerakan kamera & wajah alami.")
 
@@ -456,16 +748,14 @@ def extract_video_forensics(frames: List[Image.Image]) -> Dict[str, Any]:
         recompression_detected = True
         notes.append("Catatan Forensik: Terdeteksi kompresi berulang (khas media yang diteruskan berulang kali di WhatsApp/medsos).")
 
-    forensic_anomaly_score = min(1.0, max(0.0, forensic_anomaly_score))
+    forensic_anomaly_score = float(0.70 * avg_seam_anomaly + 0.30 * min(1.0, avg_fft * 2.0))
+    forensic_anomaly_score = min(0.98, max(0.02, forensic_anomaly_score))
 
     return {
         "mean_temporal_diff": round(mean_diff, 2),
         "blockiness_score": round(mean_blockiness, 2),
         "temporal_anomaly": temporal_anomaly,
         "recompression_detected": recompression_detected,
-        "sharpness_ratio": round(avg_lap_ratio, 3),
-        "chroma_ratio": round(avg_chroma_ratio, 3),
-        "sensor_noise": round(avg_noise, 3),
         "forensic_anomaly_score": round(forensic_anomaly_score, 3),
         "notes": notes,
     }
@@ -489,34 +779,46 @@ class ModelManager:
             return
         self.initialized = True
         
-        # Audio Deepfake Model (Wav2Vec2)
+        # Audio Deepfake Models
         self.audio_model = None
         self.audio_feature_extractor = None
         self.audio_model_name = AUDIO_DEEPFAKE_MODEL_ID
-        
-        # Audio Speech-to-Text Model (Whisper ASR)
-        self.asr_pipeline = None
-        self.asr_model_name = AUDIO_ASR_MODEL_ID
+        self.voice_biometric_pipeline = None
 
-        # Vision Deepfake Model (ViT)
+        # Vision Deepfake Model (ViT + Biometric Ensemble)
         self.vision_model = None
         self.vision_image_processor = None
         self.vision_model_name = VISION_MODEL_ID
         self.vision_id2label = {0: "Real", 1: "Fake"}  # Default; updated dynamically on load
+
         
         self.is_loading = False
 
     def load_models(self):
         """
-        Loads HuggingFace pretrained models and processors into memory (Singleton).
+        Loads Pretrained Models (Voice Biometrics, Video Biometrics, Wav2Vec2, Vision Transformer) into memory (Singleton).
         """
-        if self.audio_model is not None and self.asr_pipeline is not None and self.vision_model is not None:
+        if self.audio_model is not None and self.vision_model is not None and self.voice_biometric_pipeline is not None:
             return
 
         self.is_loading = True
-        logger.info("Loading HuggingFace AI models (ASR, Acoustic Deepfake, Vision Transformer)...")
+        logger.info("Loading AI models (Voice Biometrics ML, Acoustic Wav2Vec2, Vision Transformer)...")
 
-        # 1. Load Audio Classification Model (Wav2Vec2-Large-XLSR)
+        # 1. Load Voice Biometric ML Pipeline (60-dim MFCC + Spectral)
+        try:
+            model_path = os.path.join(os.path.dirname(__file__), "..", "models", "voice_biometric_model.joblib")
+            if os.path.exists(model_path):
+                self.voice_biometric_pipeline = joblib.load(model_path)
+                logger.info("Voice Biometric ML Pipeline loaded successfully.")
+            else:
+                logger.warning(f"Voice Biometric model file not found at {model_path}, will use dynamic calibration fallback.")
+                self.voice_biometric_pipeline = None
+        except Exception as e:
+            logger.warning(f"Could not load voice biometric model: {e}")
+            self.voice_biometric_pipeline = None
+
+
+        # 3. Load Audio Classification Model (Wav2Vec2-Large-XLSR)
         try:
             from transformers import AutoFeatureExtractor, AutoModelForAudioClassification
             logger.info(f"Loading Audio Deepfake Model: {self.audio_model_name}")
@@ -528,21 +830,6 @@ class ModelManager:
             logger.warning(f"Could not load HuggingFace audio model {self.audio_model_name}: {e}. Fallback enabled.")
             self.audio_model = None
             self.audio_feature_extractor = None
-
-        # 2. Load Speech-to-Text Whisper ASR Pipeline
-        try:
-            from transformers import pipeline
-            logger.info(f"Loading Whisper ASR Model: {self.asr_model_name}")
-            self.asr_pipeline = pipeline(
-                "automatic-speech-recognition",
-                model=self.asr_model_name,
-                chunk_length_s=30,
-                return_timestamps=False,
-            )
-            logger.info("Whisper ASR pipeline loaded successfully.")
-        except Exception as e:
-            logger.warning(f"Could not load Whisper ASR model {self.asr_model_name}: {e}. Fallback enabled.")
-            self.asr_pipeline = None
 
         # 3. Load Vision Deepfake Classification Model (ViT)
         try:
@@ -563,48 +850,83 @@ class ModelManager:
 
         self.is_loading = False
 
-    def decode_and_resample_audio(self, file_bytes: bytes) -> Tuple[Optional[np.ndarray], float]:
+    def decode_and_resample_audio(self, file_bytes: bytes, filename: Optional[str] = None) -> Tuple[Optional[np.ndarray], float]:
         """
-        Decodes audio bytes and resamples to 16,000 Hz mono float32 array.
-        Uses a fallback chain: soundfile -> pydub (ffmpeg) for broad format support including MP3.
+        Robust multi-tier audio decoder:
+        - Tier 1: Bundled imageio-ffmpeg binary (Supports AAC, M4A, MP3, WAV, OGG, FLAC, OPUS, WMA, AMR)
+        - Tier 2: soundfile (WAV, FLAC, OGG)
+        - Tier 3: pydub fallback
+        Resamples all inputs cleanly to 16,000 Hz mono float32 array.
         """
-        audio_data = None
-        sample_rate = None
+        if not file_bytes or len(file_bytes) < 100:
+            return None, 0.0
 
-        # Attempt 1: soundfile (supports WAV, FLAC, OGG, but NOT MP3)
+        # Tier 1: Bundled imageio-ffmpeg (handles all formats including AAC on all OS)
+        try:
+            import imageio_ffmpeg
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+            suffix = os.path.splitext(filename or "")[1] or ".bin"
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                    tmp.write(file_bytes)
+                    tmp_path = tmp.name
+
+                cmd = [
+                    ffmpeg_exe,
+                    "-y",
+                    "-i", tmp_path,
+                    "-f", "s16le",
+                    "-acodec", "pcm_s16le",
+                    "-ar", "16000",
+                    "-ac", "1",
+                    "pipe:1"
+                ]
+                p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                raw_pcm, _ = p.communicate()
+                if p.returncode == 0 and len(raw_pcm) > 0:
+                    samples = np.frombuffer(raw_pcm, dtype=np.int16).astype(np.float32) / 32768.0
+                    duration = float(len(samples) / 16000.0)
+                    return samples, duration
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+        except Exception as ffmpeg_err:
+            logger.info(f"Tier 1 imageio_ffmpeg decode notice: {ffmpeg_err}. Trying soundfile.")
+
+        # Tier 2: soundfile (supports WAV, FLAC, OGG)
         try:
             import soundfile as sf
             with io.BytesIO(file_bytes) as bio:
                 audio_data, sample_rate = sf.read(bio)
+            if audio_data.ndim > 1:
+                audio_data = np.mean(audio_data, axis=1)
+            duration_sec = float(len(audio_data) / max(sample_rate, 1))
+            audio_16k = resample_audio(audio_data, sample_rate, 16000)
+            return audio_16k, duration_sec
         except Exception as sf_err:
-            logger.info(f"soundfile decode failed (expected for MP3): {sf_err}. Trying pydub fallback.")
+            logger.info(f"Tier 2 soundfile decode failed: {sf_err}. Trying pydub fallback.")
 
-        # Attempt 2: pydub (supports MP3, AAC, M4A, WMA, and all ffmpeg-supported formats)
-        if audio_data is None:
-            try:
-                from pydub import AudioSegment
-                with io.BytesIO(file_bytes) as bio:
-                    audio_seg = AudioSegment.from_file(bio)
-                # Convert to mono, extract raw samples
-                audio_seg = audio_seg.set_channels(1)
-                sample_rate = audio_seg.frame_rate
-                samples = np.array(audio_seg.get_array_of_samples(), dtype=np.float32)
-                # Normalize to [-1.0, 1.0] range based on sample width
-                max_val = float(2 ** (audio_seg.sample_width * 8 - 1))
-                audio_data = samples / max_val
-            except Exception as pydub_err:
-                logger.warning(f"pydub decode also failed: {pydub_err}")
-                raise RuntimeError(
-                    f"Format audio tidak dapat didekode oleh soundfile maupun pydub/ffmpeg. "
-                    f"Pastikan file audio valid dan ffmpeg terinstal."
-                )
+        # Tier 3: pydub
+        try:
+            from pydub import AudioSegment
+            with io.BytesIO(file_bytes) as bio:
+                audio_seg = AudioSegment.from_file(bio)
+            audio_seg = audio_seg.set_channels(1)
+            sample_rate = audio_seg.frame_rate
+            samples = np.array(audio_seg.get_array_of_samples(), dtype=np.float32)
+            max_val = float(2 ** (audio_seg.sample_width * 8 - 1))
+            audio_data = samples / max_val
+            duration_sec = float(len(audio_data) / max(sample_rate, 1))
+            audio_16k = resample_audio(audio_data, sample_rate, 16000)
+            return audio_16k, duration_sec
+        except Exception as pydub_err:
+            logger.warning(f"Tier 3 pydub decode failed: {pydub_err}")
 
-        if audio_data.ndim > 1:
-            audio_data = np.mean(audio_data, axis=1)
-
-        duration_sec = float(len(audio_data) / max(sample_rate, 1))
-        audio_16k = resample_audio(audio_data, sample_rate, 16000)
-        return audio_16k, duration_sec
+        return None, 0.0
 
     def transcribe_audio_speech(self, audio_16k: np.ndarray) -> str:
         """
@@ -625,13 +947,26 @@ class ModelManager:
 
     def predict_audio_acoustic(self, audio_16k: np.ndarray, duration_sec: float) -> Tuple[float, Dict[str, Any]]:
         """
-        Runs Acoustic Forensics and Wav2Vec2 Deepfake classification.
+        High-Precision Audio Authenticity (60-dim Voice Biometrics ML + Wav2Vec2 + Spectral Forensics).
         """
         forensic_meta = extract_acoustic_forensics(audio_16k)
         
+        # 1. High-Precision Voice Biometric Inference (60-dim MFCC + Spectral)
+        feat = extract_comprehensive_acoustic_features(audio_16k)
+        if self.voice_biometric_pipeline is not None:
+            try:
+                biometric_prob = float(self.voice_biometric_pipeline.predict_proba([feat])[0][1])
+            except Exception as e:
+                logger.warning(f"Voice biometric ML inference error: {e}")
+                exact_zero = float(np.sum(np.abs(audio_16k) < 1e-5) / max(1, len(audio_16k)))
+                biometric_prob = 0.85 if exact_zero > 0.04 else 0.05
+        else:
+            exact_zero = float(np.sum(np.abs(audio_16k) < 1e-5) / max(1, len(audio_16k)))
+            biometric_prob = 0.85 if exact_zero > 0.04 else 0.05
+
+        # 2. Neural Wav2Vec2 Feature Extraction
         neural_fake_score = 0.5
         neural_real_score = 0.5
-
         if self.audio_model is not None and self.audio_feature_extractor is not None:
             try:
                 inputs = self.audio_feature_extractor(
@@ -647,35 +982,29 @@ class ModelManager:
                 if isinstance(probs, list) and len(probs) >= 2:
                     neural_fake_score = float(probs[1])
                     neural_real_score = float(probs[0])
-                else:
-                    neural_fake_score = float(probs) if isinstance(probs, (float, int)) else 0.5
-                    neural_real_score = 1.0 - neural_fake_score
             except Exception as e:
                 logger.error(f"Neural acoustic model error: {e}")
 
-        # Calibrated Acoustic Fake Score
-        forensic_modifier = forensic_meta.get("synthetic_score_modifier", 0.0)
-
-        # Fuse neural model output with multi-feature physical acoustic evidence
-        if 0.35 <= neural_fake_score <= 0.65:
-            calibrated_fake_score = 0.50 + forensic_modifier
+        # 3. Robust Multi-Evidence Fusion
+        if biometric_prob >= 0.60:
+            calibrated_fake_score = 0.85 * biometric_prob + 0.15 * max(0.4, neural_fake_score)
         else:
-            calibrated_fake_score = neural_fake_score + (0.5 * forensic_modifier)
+            calibrated_fake_score = 0.80 * biometric_prob + 0.20 * min(0.35, neural_fake_score)
 
-        calibrated_fake_score = min(0.96, max(0.04, calibrated_fake_score))
-        calibrated_real_score = max(0.04, 1.0 - calibrated_fake_score)
+        calibrated_fake_score = min(0.98, max(0.02, calibrated_fake_score))
+        calibrated_real_score = max(0.02, 1.0 - calibrated_fake_score)
 
         notes = [
             f"Durasi sampel suara dianalisis: {round(duration_sec, 2)} detik.",
-            f"Model Akustik: {self.audio_model_name} + Forensic Spectral Engine.",
+            f"Model Akustik: Voice Biometrics 60-dim ML Engine + {self.audio_model_name}.",
             f"Probabilitas Suara Sintetis (AI Deepfake): {calibrated_fake_score:.1%}, Manusia Alami: {calibrated_real_score:.1%}.",
         ]
         if forensic_meta.get("notes"):
             notes.extend(forensic_meta["notes"])
 
         return calibrated_fake_score, {
-            "model_name": f"{self.audio_model_name} & Whisper ASR",
-            "architecture": "Wav2Vec2-Large-XLSR + OpenAI Whisper ASR + Spectral Forensics",
+            "model_name": f"{self.audio_model_name} + Voice Biometrics ML",
+            "architecture": "60-dim MFCC-Spectral Voice Biometrics + Wav2Vec2-Large-XLSR",
             "duration_sec": round(duration_sec, 2),
             "sample_rate": 16000,
             "fake_probability": round(calibrated_fake_score, 4),
@@ -683,12 +1012,13 @@ class ModelManager:
             "spectral_rolloff_hz": forensic_meta.get("spectral_rolloff_hz"),
             "spectral_centroid_hz": forensic_meta.get("spectral_centroid_hz"),
             "silence_ratio": forensic_meta.get("silence_ratio"),
+            "pitch_jitter_pct": forensic_meta.get("pitch_jitter_pct"),
             "notes": notes,
         }
 
     def predict_audio(self, file_bytes: bytes, filename: Optional[str] = None) -> Tuple[Optional[float], Dict[str, Any]]:
         """
-        Unified Audio Analysis (Resampling + Whisper ASR + Wav2Vec2 + Spectral Forensics).
+        Unified Audio Analysis (Resampling + Voice Biometrics + Wav2Vec2 + Spectral Forensics).
         """
         if not file_bytes or len(file_bytes) < 100:
             return None, {
@@ -697,18 +1027,15 @@ class ModelManager:
             }
 
         # Ensure models are loaded
-        if self.audio_model is None or self.asr_pipeline is None:
+        if self.audio_model is None:
             self.load_models()
 
         try:
-            audio_16k, duration_sec = self.decode_and_resample_audio(file_bytes)
+            audio_16k, duration_sec = self.decode_and_resample_audio(file_bytes, filename)
             if audio_16k is None:
                 return None, {"error": "Format file audio tidak valid atau tidak dapat didekode."}
 
-            transcribed_text = self.transcribe_audio_speech(audio_16k)
             calibrated_fake_score, metadata = self.predict_audio_acoustic(audio_16k, duration_sec)
-            metadata["transcribed_text"] = transcribed_text
-
             return calibrated_fake_score, metadata
         except Exception as e:
             logger.error(f"Audio processing error: {e}")
@@ -719,7 +1046,10 @@ class ModelManager:
 
     def predict_video(self, file_bytes: bytes, filename: Optional[str] = None) -> Tuple[Optional[float], Dict[str, Any]]:
         """
-        Vision Transformer (ViT) Deepfake Detection with Temporal Consistency & WhatsApp Recompression Forensics.
+        Multi-Signal Forensic Video Deepfake Detection Engine.
+        Combines ViT face-crop inference with Error Level Analysis (ELA),
+        noise inconsistency detection, face sharpness analysis,
+        FFT frequency domain forensics, and chrominance HP analysis.
         """
         t_overall_start = time.time()
         file_size = len(file_bytes) if file_bytes else 0
@@ -739,151 +1069,282 @@ class ModelManager:
             logger.info("[VIDEO INFERENCE] Loading vision models into memory...")
             self.load_models()
 
-        # 1. Multi-tier Robust Frame Extraction with detailed timings
+        # 1. Multi-tier Robust Frame Extraction
         t_extract_start = time.time()
         frames, extract_meta = extract_video_frames_robust(file_bytes, filename, max_frames=5)
         extract_duration_ms = round((time.time() - t_extract_start) * 1000, 2)
 
         logger.info(
-            f"[VIDEO FRAME EXTRACTION] Finished in {extract_duration_ms}ms | Extracted: {len(frames)} frames via {extract_meta.get('tier_used')}"
+            f"[VIDEO FRAME EXTRACTION] Finished in {extract_duration_ms}ms | "
+            f"Extracted: {len(frames)} frames via {extract_meta.get('tier_used')}"
         )
 
         if not frames or len(frames) == 0:
-            logger.error("[VIDEO FRAME EXTRACTION FAILED] 0 frames were extracted. Marking as tidak_dapat_diperiksa.")
+            logger.error("[VIDEO FRAME EXTRACTION FAILED] 0 frames extracted.")
             return None, {
-                "error": "Format media tidak dapat didekode oleh sistem (decoder OpenCV dan FFmpeg gagal membaca frame).",
+                "error": "Format media tidak dapat didekode oleh sistem.",
                 "status": "tidak_dapat_diperiksa",
                 "model_name": self.vision_model_name,
                 "extract_logs": extract_meta.get("logs", []),
                 "extract_duration_ms": extract_duration_ms,
             }
 
+        is_single_image = len(frames) == 1
+
         # 2. Temporal Consistency & Recompression Forensics
         t_forensics_start = time.time()
         video_forensics = extract_video_forensics(frames)
         forensics_duration_ms = round((time.time() - t_forensics_start) * 1000, 2)
 
-        logger.info(
-            f"[VIDEO FORENSICS] mean_diff={video_forensics.get('mean_temporal_diff')}, "
-            f"blockiness={video_forensics.get('blockiness_score')}, "
-            f"temporal_anomaly={video_forensics.get('temporal_anomaly')}"
-        )
-
-        # 3. Inference on each frame using ViT AutoModel with individual logging
+        # 3. Multi-Signal Per-Frame Analysis (ViT + ELA + Noise + Sharpness + FFT + Chroma)
         t_infer_start = time.time()
-        frame_deepfake_scores: List[float] = []
+
+        frame_vit_scores: List[float] = []
+        frame_ela_values: List[float] = []
+        frame_lap_vars: List[float] = []
+        frame_noise_ratios: List[float] = []
+        frame_fft_scores: List[float] = []
+        frame_chroma_hp: List[float] = []
         frame_diagnostics: List[Dict[str, Any]] = []
 
-        if self.vision_model is not None and self.vision_image_processor is not None:
-            # Resolve which logit index corresponds to "Fake / Deepfake" from model config
-            deepfake_idx = 1  # default for dima806/deepfake_vs_real_image_detection: {0: 'Real', 1: 'Fake'}
-            for idx, label in self.vision_id2label.items():
-                if str(label).lower() in ["fake", "deepfake", "spoof"]:
-                    deepfake_idx = int(idx)
-                    break
-            logger.info(f"Vision model deepfake logit index resolved to: {deepfake_idx} (label: {self.vision_id2label.get(deepfake_idx, 'unknown')})")
+        # Resolve ViT deepfake logit index from model config
+        deepfake_idx = 1
+        for idx, label in self.vision_id2label.items():
+            if str(label).lower() in ["fake", "deepfake", "spoof"]:
+                deepfake_idx = int(idx)
+                break
 
-            try:
-                for i, frame_img in enumerate(frames):
-                    # Aspect-preserving smart fit (focusing on upper portrait area) to prevent distortion
-                    fitted_frame = ImageOps.fit(
-                        frame_img, (224, 224), method=Image.Resampling.LANCZOS, centering=(0.5, 0.4)
-                    )
-                    inputs = self.vision_image_processor(images=fitted_frame, return_tensors="pt")
+        for i, frame_img in enumerate(frames):
+            f_rgb = np.array(frame_img.convert("RGB"))
+
+            # Face localization via morphological skin detection
+            bbox, face_cnt, is_face = extract_face_roi_smart(frame_img)
+            x1, y1, x2, y2 = bbox
+
+            # Signal 1: ViT on face crop (primary neural signal)
+            vit_score = 0.50
+            raw_logits_list = []
+            softmax_list = []
+            if self.vision_model is not None and self.vision_image_processor is not None:
+                try:
+                    face_crop = Image.fromarray(f_rgb[y1:y2, x1:x2])
+                    face_resized = face_crop.resize((224, 224), Image.Resampling.LANCZOS)
+                    inputs = self.vision_image_processor(images=face_resized, return_tensors="pt")
                     with torch.no_grad():
                         raw_logits = self.vision_model(**inputs).logits
                         probs = torch.softmax(raw_logits, dim=-1).squeeze().tolist()
-
                     if isinstance(probs, list) and len(probs) >= 2:
-                        deepfake_p = float(probs[deepfake_idx])
-                        deepfake_p = min(0.96, max(0.04, deepfake_p))
-                    else:
-                        deepfake_p = 0.50
+                        vit_score = float(probs[deepfake_idx])
+                    raw_logits_list = [round(float(l), 4) for l in raw_logits.squeeze().tolist()]
+                    softmax_list = [round(float(p), 4) for p in probs] if isinstance(probs, list) else []
+                except Exception as e:
+                    logger.warning(f"ViT inference error frame {i+1}: {e}")
+            frame_vit_scores.append(vit_score)
 
-                    frame_deepfake_scores.append(deepfake_p)
-                    frame_diag = {
-                        "frame_index": i + 1,
-                        "raw_logits": [round(float(l), 4) for l in raw_logits.squeeze().tolist()] if raw_logits is not None else [],
-                        "softmax_probs": [round(float(p), 4) for p in probs] if isinstance(probs, list) else [],
-                        "deepfake_score": round(deepfake_p, 4),
-                    }
-                    frame_diagnostics.append(frame_diag)
-                    logger.info(
-                        f"[FRAME {i+1}/{len(frames)}] Deepfake Probability: {deepfake_p:.2%} | Softmax: {frame_diag['softmax_probs']}"
-                    )
-            except Exception as e:
-                logger.error(f"Vision model inference error: {e}")
+            # Signal 2: ELA face value
+            try:
+                ela_val = compute_ela_face_score(frame_img, bbox)
+            except Exception:
+                ela_val = 0.5
+            frame_ela_values.append(ela_val)
 
-        # Fallback heuristic if offline
-        if not frame_deepfake_scores:
-            logger.warning("[VIDEO INFERENCE NOTICE] Deep learning model offline, using statistical variance fallback.")
+            # Signal 3: Face sharpness (Laplacian variance)
+            try:
+                face_gray = cv2.cvtColor(f_rgb[y1:y2, x1:x2], cv2.COLOR_RGB2GRAY)
+                lap_var = float(cv2.Laplacian(face_gray, cv2.CV_64F).var()) if face_gray.size > 100 else 100.0
+            except Exception:
+                lap_var = 100.0
+            frame_lap_vars.append(lap_var)
+
+            # Signal 4: Noise inconsistency (face vs background)
+            try:
+                noise_ratio = compute_noise_face_ratio(f_rgb, bbox)
+            except Exception:
+                noise_ratio = 0.0
+            frame_noise_ratios.append(noise_ratio)
+
+            # Signal 5: FFT face frequency anomaly
+            try:
+                face_gray_fft = cv2.cvtColor(f_rgb[y1:y2, x1:x2], cv2.COLOR_RGB2GRAY).astype(np.float32)
+                fft_score = compute_fft_spectral_anomaly(face_gray_fft) if face_gray_fft.shape[0] >= 32 else 0.0
+            except Exception:
+                fft_score = 0.0
+            frame_fft_scores.append(fft_score)
+
+            # Signal 6: Chrominance high-frequency (CrCb Laplacian std)
+            try:
+                ycrcb_face = cv2.cvtColor(f_rgb[y1:y2, x1:x2], cv2.COLOR_RGB2YCrCb)
+                cr_hp = float(np.std(cv2.Laplacian(ycrcb_face[:, :, 1].astype(np.float64), cv2.CV_64F)))
+                cb_hp = float(np.std(cv2.Laplacian(ycrcb_face[:, :, 2].astype(np.float64), cv2.CV_64F)))
+                chroma_hp_max = max(cr_hp, cb_hp)
+            except Exception:
+                chroma_hp_max = 2.0
+            frame_chroma_hp.append(chroma_hp_max)
+
+            frame_diagnostics.append({
+                "frame_index": i + 1,
+                "raw_logits": raw_logits_list,
+                "softmax_probs": softmax_list,
+                "deepfake_score": round(vit_score, 4),
+                "ela_face": round(ela_val, 3),
+                "lap_var": round(lap_var, 1),
+                "noise_ratio": round(noise_ratio, 4),
+                "fft_face": round(fft_score, 4),
+                "chroma_hp": round(chroma_hp_max, 2),
+                "face_detected": is_face,
+            })
+
+            logger.info(
+                f"[FRAME {i+1}/{len(frames)}] ViT={vit_score:.2%} ELA={ela_val:.2f} "
+                f"Lap={lap_var:.0f} Noise={noise_ratio:.3f} FFT={fft_score:.3f} "
+                f"ChromaHP={chroma_hp_max:.1f}"
+            )
+
+        # Fallback if ViT offline
+        if not frame_vit_scores:
+            logger.warning("[VIDEO INFERENCE] ViT offline, using statistical fallback.")
             for frame_img in frames:
                 np_img = np.array(frame_img.resize((128, 128)))
-                edge_variance = float(np.var(np_img))
-                f_score = 0.25 + (0.0002 * (edge_variance % 200))
-                frame_deepfake_scores.append(min(0.70, max(0.15, f_score)))
+                f_score = 0.25 + (0.0002 * (float(np.var(np_img)) % 200))
+                frame_vit_scores.append(min(0.70, max(0.15, f_score)))
 
         infer_duration_ms = round((time.time() - t_infer_start) * 1000, 2)
-        raw_avg_vit = float(np.mean(frame_deepfake_scores))
-        
-        is_single_image = len(frames) == 1
-        forensic_anomaly = float(video_forensics.get("forensic_anomaly_score", 0.0))
 
-        # Hybrid Forensic + ViT Ensemble Engine
-        if is_single_image:
-            combined_score = 0.60 * raw_avg_vit + 0.40 * forensic_anomaly
+        # 4. Multi-Signal Continuous Fusion Formula
+        max_vit = float(np.max(frame_vit_scores))
+        mean_vit = float(np.mean(frame_vit_scores))
+        avg_ela = float(np.mean(frame_ela_values))
+        avg_lap = float(np.mean(frame_lap_vars))
+        max_noise = float(np.max(frame_noise_ratios))
+        avg_fft = float(np.mean(frame_fft_scores))
+        max_chroma_hp = float(np.max(frame_chroma_hp))
+
+        # ViT primary signal (face-crop based)
+        vit_primary = max_vit if max_vit > 0.40 else min(1.0, mean_vit * 2.0)
+
+        # Forensic boost signals (independent evidence channels)
+        boost = 0.0
+        boost_signals: List[str] = []
+
+        # Smoothness: over-smoothed face indicates neural generation/face-swap
+        if avg_lap < 25:
+            boost += 0.40
+            boost_signals.append(f"Wajah ekstrem halus (Laplacian={avg_lap:.0f}, normal >100)")
+        elif avg_lap < 50:
+            boost += 0.25
+            boost_signals.append(f"Wajah sangat halus (Laplacian={avg_lap:.0f}, normal >100)")
+
+        # ELA: elevated face ELA above typical camera baseline (~0.4-0.9)
+        if avg_ela > 2.0:
+            boost += 0.30
+            boost_signals.append(f"Anomali ELA kuat pada wajah ({avg_ela:.2f}, baseline <0.9)")
+        elif avg_ela > 1.3:
+            boost += 0.20
+            boost_signals.append(f"Anomali ELA sedang pada wajah ({avg_ela:.2f}, baseline <0.9)")
+        elif avg_ela > 1.0:
+            boost += 0.10
+            boost_signals.append(f"ELA wajah sedikit di atas baseline ({avg_ela:.2f})")
+
+        # Noise inconsistency: face and background have different noise characteristics
+        if max_noise > 0.40:
+            boost += 0.15
+            boost_signals.append(f"Inkonsistensi noise wajah-background ({max_noise:.2f})")
+
+        # FFT extreme: clear frequency domain generation artifacts
+        if avg_fft > 0.80:
+            boost += 0.15
+            boost_signals.append(f"Artefak frekuensi generasi terdeteksi (FFT={avg_fft:.2f})")
+
+        # Chrominance HP extreme: face with unnatural chroma patterns
+        if max_chroma_hp > 8.0:
+            boost += 0.20
+            boost_signals.append(f"Anomali krominansi ekstrem pada wajah (HP={max_chroma_hp:.1f})")
+
+        # Multi-tier evidence fusion with conservative thresholds
+        if vit_primary > 0.50 and boost >= 0.10:
+            # Strong ViT + corroborating forensic evidence -> high confidence
+            avg_score = min(0.95, 0.70 + (vit_primary + boost) * 0.15)
+        elif vit_primary > 0.50:
+            # Strong ViT alone -> moderate-high confidence
+            avg_score = vit_primary * 0.75
+        elif vit_primary > 0.10:
+            if boost >= 0.15:
+                # Moderate ViT + forensic corroboration
+                avg_score = min(0.85, 0.35 + vit_primary * 0.5 + boost * 0.4)
+            else:
+                # Moderate ViT, no corroboration -> cautious low score
+                avg_score = vit_primary * 0.35
+        elif boost >= 0.40:
+            # No ViT evidence but strong combined forensic signals
+            avg_score = min(0.75, 0.30 + boost * 0.5)
+        elif boost >= 0.20:
+            # No ViT evidence but moderate forensic signals
+            avg_score = min(0.50, 0.15 + boost * 0.5)
+        elif boost >= 0.08:
+            # Weak forensic signals detected
+            avg_score = 0.08 + boost * 0.4
         else:
-            combined_score = 0.30 * raw_avg_vit + 0.70 * forensic_anomaly
+            # No significant evidence -> assessed as clean
+            avg_score = max(0.03, 0.03 + boost * 0.3)
 
-        avg_score = max(0.04, min(0.96, float(combined_score)))
+        avg_score = max(0.03, min(0.98, float(avg_score)))
 
         total_duration_ms = round((time.time() - t_overall_start) * 1000, 2)
+
         logger.info(
-            f"[VIDEO INFERENCE COMPLETED] Raw ViT Avg: {raw_avg_vit:.2%} | Forensic Anomaly: {forensic_anomaly:.2%} | "
-            f"Final Hybrid Score: {avg_score:.2%} | "
-            f"Extraction: {extract_duration_ms}ms | Inference: {infer_duration_ms}ms | Total: {total_duration_ms}ms"
+            f"[VIDEO INFERENCE COMPLETED] ViT Primary: {vit_primary:.2%} | "
+            f"Forensic Boost: {boost:.2f} ({len(boost_signals)} signals) | "
+            f"Final Score: {avg_score:.2%} | Total: {total_duration_ms}ms"
         )
 
         # Format per-frame scores for technical detail
         frame_breakdown = [
-            f"Frame {i+1}: {score:.1%}"
-            for i, score in enumerate(frame_deepfake_scores)
+            f"Frame {i+1}: ViT={s:.1%}" for i, s in enumerate(frame_vit_scores)
         ]
 
         if is_single_image:
             notes = [
                 "Tipe Media: Citra / Foto Tunggal (Single-Frame Static Image).",
-                "Pemberitahuan: Analisis foto tunggal memiliki tingkat ketidakpastian lebih tinggi dibanding video — hasil ini sangat disarankan diverifikasi manual.",
-                f"Model spesifik: {self.vision_model_name}.",
+                "Pemberitahuan: Analisis foto tunggal memiliki tingkat ketidakpastian lebih tinggi.",
+                f"Model: {self.vision_model_name}.",
                 f"Probabilitas Deepfake: {avg_score:.1%}.",
             ]
         else:
             notes = [
-                f"Telah diekstrak dan dianalisis {len(frames)} frame representatif dari video secara merata.",
-                f"Decoder backend: {extract_meta.get('tier_used', 'unknown')} (Waktu ekstraksi: {extract_duration_ms}ms).",
-                f"Model spesifik: {self.vision_model_name} (Waktu inferensi: {infer_duration_ms}ms).",
-                f"Rincian skor per-frame ViT: {', '.join(frame_breakdown)}.",
-                f"Skor Anomali Forensik Digital: {forensic_anomaly:.1%}.",
-                f"Skor Risiko Komposit (Hybrid ViT + Forensik): {avg_score:.1%}.",
+                f"Telah diekstrak dan dianalisis {len(frames)} frame representatif dari video.",
+                f"Decoder backend: {extract_meta.get('tier_used', 'unknown')} ({extract_duration_ms}ms).",
+                f"Model: {self.vision_model_name} + Multi-Signal Forensics ({infer_duration_ms}ms).",
+                f"Skor per-frame ViT: {', '.join(frame_breakdown)}.",
+                f"ELA Wajah: {avg_ela:.2f} | Sharpness: {avg_lap:.0f} | Noise: {max_noise:.3f}.",
+                f"Skor Risiko Komposit Multi-Signal: {avg_score:.1%}.",
             ]
+
+        if boost_signals:
+            notes.append(f"Sinyal Forensik Aktif: {'; '.join(boost_signals)}.")
+
         if video_forensics.get("notes"):
             notes.extend(video_forensics["notes"])
 
         metadata = {
             "model_name": self.vision_model_name,
-            "architecture": "Hybrid Multi-Factor Digital Forensics + Vision Transformer (ViT)",
+            "architecture": "Multi-Signal Forensic Engine (ViT + ELA + Noise + FFT + Chroma + Sharpness)",
             "frames_analyzed": len(frames),
             "is_single_image": is_single_image,
-            "frame_scores": [round(s, 4) for s in frame_deepfake_scores],
+            "frame_scores": [round(s, 4) for s in frame_vit_scores],
             "frame_breakdown": ", ".join(frame_breakdown),
             "frame_diagnostics": frame_diagnostics,
-            "vit_score_avg": round(raw_avg_vit, 4),
-            "forensic_anomaly_score": round(forensic_anomaly, 4),
-            "sharpness_ratio": video_forensics.get("sharpness_ratio", 0.0),
-            "chroma_ratio": video_forensics.get("chroma_ratio", 1.0),
-            "sensor_noise": video_forensics.get("sensor_noise", 2.5),
-            "recompression_detected": video_forensics.get("recompression_detected", False),
+            "vit_score_avg": round(mean_vit, 4),
+            "vit_score_max": round(max_vit, 4),
+            "ela_face_avg": round(avg_ela, 3),
+            "face_sharpness_avg": round(avg_lap, 1),
+            "noise_ratio_max": round(max_noise, 4),
+            "fft_face_avg": round(avg_fft, 4),
+            "chroma_hp_max": round(max_chroma_hp, 2),
+            "forensic_boost": round(boost, 3),
+            "forensic_boost_signals": boost_signals,
+            "forensic_anomaly_score": round(float(video_forensics.get("forensic_anomaly_score", 0.0)), 4),
             "temporal_anomaly": video_forensics.get("temporal_anomaly", False),
+            "recompression_detected": video_forensics.get("recompression_detected", False),
             "extract_tier": extract_meta.get("tier_used"),
             "extract_duration_ms": extract_duration_ms,
             "infer_duration_ms": infer_duration_ms,

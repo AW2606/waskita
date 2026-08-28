@@ -59,8 +59,8 @@ export default function VerifikasiPage() {
       icon: Mic,
       description: "Periksa voice note, rekaman panggilan, atau pesan suara.",
       category: "upload",
-      accept: "audio/*,.mp3,.wav,.m4a,.ogg,.flac,.aac",
-      sampleHint: "Mendukung .mp3, .wav, .m4a, .ogg (Maks. 25MB)",
+      accept: "audio/*,.aac,.mp3,.wav,.m4a,.ogg,.flac",
+      sampleHint: "Mendukung .aac, .mp3, .wav, .m4a, .ogg, .flac (Maks. 25MB)",
     },
     {
       id: "video" as ContentType,

@@ -7,7 +7,7 @@ from api.core.database import init_db, SessionLocal
 from api.models.reported_number import ReportedNumber
 from api.models.scenario import Scenario
 from api.services.ml_models import get_model_manager
-from api.routers import auth, verify, family, scenarios
+from api.routers import auth, verify, family, scenarios, report
 
 
 def seed_reported_numbers():
@@ -194,6 +194,7 @@ app.include_router(auth.router)
 app.include_router(verify.router)
 app.include_router(family.router)
 app.include_router(scenarios.router)
+app.include_router(report.router)
 
 
 @app.get("/")
