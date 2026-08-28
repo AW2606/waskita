@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faShieldHalved,
@@ -23,8 +24,14 @@ export function Footer() {
               href="/"
               className="inline-flex items-center gap-2.5 font-display font-bold text-xl text-ink dark:text-white hover:text-primary transition-colors"
             >
-              <div className="w-8 h-8 rounded-xl bg-primary flex items-center justify-center text-white text-xs font-bold shadow-xs">
-                W
+              <div className="w-8 h-8 rounded-full overflow-hidden bg-white dark:bg-white/95 flex items-center justify-center p-0.5 shadow-2xs border border-muted/20 shrink-0">
+                <Image
+                  src="/logoweb.png"
+                  alt="Waskita Logo"
+                  width={28}
+                  height={28}
+                  className="w-full h-full object-contain rounded-full"
+                />
               </div>
               <span>Waskita</span>
             </Link>
@@ -76,8 +83,14 @@ export function Footer() {
               href="/"
               className="inline-flex items-center gap-3 font-display font-bold text-2xl text-ink dark:text-white hover:text-primary transition-colors"
             >
-              <div className="w-9 h-9 rounded-xl bg-primary flex items-center justify-center text-white text-sm font-bold shadow-xs">
-                W
+              <div className="w-9 h-9 rounded-full overflow-hidden bg-white dark:bg-white/95 flex items-center justify-center p-1 shadow-2xs border border-muted/20 shrink-0">
+                <Image
+                  src="/logoweb.png"
+                  alt="Waskita Logo"
+                  width={32}
+                  height={32}
+                  className="w-full h-full object-contain rounded-full"
+                />
               </div>
               <span>Waskita</span>
             </Link>

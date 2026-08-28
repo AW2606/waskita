@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
@@ -75,12 +76,17 @@ export function Navbar() {
         {/* Logo */}
         <Link
           href="/"
-          className="group flex items-center gap-3 transition-transform active:scale-95"
+          className="group flex items-center gap-2.5 sm:gap-3 transition-transform active:scale-95"
         >
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-sm transition-transform duration-300 group-hover:scale-105 group-hover:rotate-1">
-            <span className="font-display font-extrabold text-xl leading-none">
-              W
-            </span>
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full overflow-hidden bg-white dark:bg-white/95 flex items-center justify-center p-1 shadow-xs border border-muted/25 transition-transform duration-300 group-hover:scale-105 shrink-0">
+            <Image
+              src="/logoweb.png"
+              alt="Waskita Logo"
+              width={36}
+              height={36}
+              className="w-full h-full object-contain rounded-full"
+              priority
+            />
           </div>
 
           <span className="font-display font-extrabold text-2xl tracking-tight text-ink dark:text-white">

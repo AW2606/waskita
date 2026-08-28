@@ -2,6 +2,7 @@
 
 import React from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faArrowLeft } from "@fortawesome/free-solid-svg-icons";
 import { AuthIllustration } from "./AuthIllustration";
@@ -82,10 +83,22 @@ export function AuthLayoutCard({
         <div className="relative w-full md:w-[44%] lg:w-[42%] bg-white md:bg-transparent text-[#102B24] p-5 sm:p-6 md:p-7 lg:pl-9 lg:pr-4 lg:py-9 flex flex-col justify-between z-10">
           
           {/* Top-Left Branding / Logo */}
-          <div className="z-10 text-left flex items-center justify-between md:block">
-            <span className="font-display font-black text-xl sm:text-2xl md:text-3xl tracking-tight text-[#0F2D25] leading-none">
-              Waskita
-            </span>
+          <div className="z-10 text-left flex items-center justify-between md:flex md:items-center md:gap-3">
+            <Link href="/" className="inline-flex items-center gap-2.5 group transition-transform active:scale-95">
+              <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full overflow-hidden bg-white flex items-center justify-center p-0.5 shadow-xs border border-[#16382E]/10 shrink-0">
+                <Image
+                  src="/logoweb.png"
+                  alt="Waskita Logo"
+                  width={32}
+                  height={32}
+                  className="w-full h-full object-contain rounded-full"
+                  priority
+                />
+              </div>
+              <span className="font-display font-black text-xl sm:text-2xl md:text-3xl tracking-tight text-[#0F2D25] leading-none">
+                Waskita
+              </span>
+            </Link>
             <span className="md:hidden text-[10px] font-mono text-[#2F6F62] bg-[#E8F4EE] px-2.5 py-1 rounded-full font-bold">
               AI FORENSIK
             </span>
