@@ -17,4 +17,8 @@ class User(Base):
     duress_code = Column(String(100), nullable=True, default=None)
     safe_word_updated_at = Column(DateTime, nullable=True, default=None)
 
+    # Password Recovery: Security Question & Answer (Hashed)
+    security_question = Column(String(255), nullable=True, default=None)
+    security_answer_hash = Column(String(255), nullable=True, default=None)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now(), default=datetime.datetime.utcnow)

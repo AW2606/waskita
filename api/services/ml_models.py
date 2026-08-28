@@ -1046,10 +1046,19 @@ class ModelManager:
 
     def predict_video(self, file_bytes: bytes, filename: Optional[str] = None) -> Tuple[Optional[float], Dict[str, Any]]:
         """
-        Multi-Signal Forensic Video Deepfake Detection Engine.
-        Combines ViT face-crop inference with Error Level Analysis (ELA),
-        noise inconsistency detection, face sharpness analysis,
-        FFT frequency domain forensics, and chrominance HP analysis.
+        Multimodal Audiovisual Deepfake Video Detection Engine.
+        Combines:
+        1. Visual Forensics:
+           - ViT Face-Crop Inference
+           - Eye vs Mouth Sharpness Discrepancy (Wav2Lip / SadTalker / AI Lipsync)
+           - Error Level Analysis (ELA) on Face ROI
+           - Facial Texture Variance & Neural Smoothing (Laplacian)
+           - Sensor Noise Inconsistency (Face vs Background)
+           - 2D FFT Frequency Domain Grid Anomalies
+           - Chrominance High-Frequency CrCb Artifacts
+        2. Audio Stream Biometrics (if audio track exists):
+           - 60-dim Acoustic Feature Classifier + Wav2Vec2 AI Voice Detection
+           - Synthetic TTS / Voice Cloning Probability
         """
         t_overall_start = time.time()
         file_size = len(file_bytes) if file_bytes else 0
@@ -1091,17 +1100,34 @@ class ModelManager:
 
         is_single_image = len(frames) == 1
 
-        # 2. Temporal Consistency & Recompression Forensics
+        # 2. Extract and Analyze Audio Track from Video (Multimodal)
+        t_audio_start = time.time()
+        audio_16k, audio_dur = self.decode_and_resample_audio(file_bytes, filename=filename)
+        has_audio = audio_16k is not None and len(audio_16k) > 1600 and audio_dur > 0.3
+        
+        audio_fake_prob: Optional[float] = None
+        audio_meta: Dict[str, Any] = {}
+        if has_audio:
+            try:
+                audio_fake_prob, audio_meta = self.predict_audio_acoustic(audio_16k, audio_dur)
+                logger.info(f"[VIDEO AUDIO TRACK] Detected audio: {audio_dur:.1f}s | Audio Deepfake Prob: {audio_fake_prob:.2%}")
+            except Exception as e:
+                logger.warning(f"[VIDEO AUDIO TRACK ERROR] Could not analyze audio stream: {e}")
+                has_audio = False
+        audio_duration_ms = round((time.time() - t_audio_start) * 1000, 2)
+
+        # 3. Temporal Consistency & Recompression Forensics
         t_forensics_start = time.time()
         video_forensics = extract_video_forensics(frames)
         forensics_duration_ms = round((time.time() - t_forensics_start) * 1000, 2)
 
-        # 3. Multi-Signal Per-Frame Analysis (ViT + ELA + Noise + Sharpness + FFT + Chroma)
+        # 4. Multi-Signal Per-Frame Analysis
         t_infer_start = time.time()
 
         frame_vit_scores: List[float] = []
         frame_ela_values: List[float] = []
         frame_lap_vars: List[float] = []
+        frame_em_ratios: List[float] = []
         frame_noise_ratios: List[float] = []
         frame_fft_scores: List[float] = []
         frame_chroma_hp: List[float] = []
@@ -1120,16 +1146,16 @@ class ModelManager:
             # Face localization via morphological skin detection
             bbox, face_cnt, is_face = extract_face_roi_smart(frame_img)
             x1, y1, x2, y2 = bbox
+            face_crop = f_rgb[y1:y2, x1:x2]
 
-            # Signal 1: ViT on face crop (primary neural signal)
+            # Signal 1: ViT on face crop
             vit_score = 0.50
             raw_logits_list = []
             softmax_list = []
             if self.vision_model is not None and self.vision_image_processor is not None:
                 try:
-                    face_crop = Image.fromarray(f_rgb[y1:y2, x1:x2])
-                    face_resized = face_crop.resize((224, 224), Image.Resampling.LANCZOS)
-                    inputs = self.vision_image_processor(images=face_resized, return_tensors="pt")
+                    face_pil = Image.fromarray(face_crop).resize((224, 224), Image.Resampling.LANCZOS)
+                    inputs = self.vision_image_processor(images=face_pil, return_tensors="pt")
                     with torch.no_grad():
                         raw_logits = self.vision_model(**inputs).logits
                         probs = torch.softmax(raw_logits, dim=-1).squeeze().tolist()
@@ -1148,13 +1174,22 @@ class ModelManager:
                 ela_val = 0.5
             frame_ela_values.append(ela_val)
 
-            # Signal 3: Face sharpness (Laplacian variance)
+            # Signal 3: Face sharpness & Eye vs Mouth sharpness ratio (Lipsync detection)
             try:
-                face_gray = cv2.cvtColor(f_rgb[y1:y2, x1:x2], cv2.COLOR_RGB2GRAY)
+                face_gray = cv2.cvtColor(face_crop, cv2.COLOR_RGB2GRAY)
                 lap_var = float(cv2.Laplacian(face_gray, cv2.CV_64F).var()) if face_gray.size > 100 else 100.0
+                
+                fh = max(10, y2 - y1)
+                mouth_crop = face_gray[int(fh * 0.65):, :]
+                eye_crop = face_gray[int(fh * 0.20):int(fh * 0.50), :]
+                m_lap = float(cv2.Laplacian(mouth_crop, cv2.CV_64F).var()) if mouth_crop.size > 20 else lap_var
+                e_lap = float(cv2.Laplacian(eye_crop, cv2.CV_64F).var()) if eye_crop.size > 20 else lap_var
+                em_ratio = float(m_lap / (e_lap + 1e-5))
             except Exception:
                 lap_var = 100.0
+                em_ratio = 1.0
             frame_lap_vars.append(lap_var)
+            frame_em_ratios.append(em_ratio)
 
             # Signal 4: Noise inconsistency (face vs background)
             try:
@@ -1165,7 +1200,7 @@ class ModelManager:
 
             # Signal 5: FFT face frequency anomaly
             try:
-                face_gray_fft = cv2.cvtColor(f_rgb[y1:y2, x1:x2], cv2.COLOR_RGB2GRAY).astype(np.float32)
+                face_gray_fft = cv2.cvtColor(face_crop, cv2.COLOR_RGB2GRAY).astype(np.float32)
                 fft_score = compute_fft_spectral_anomaly(face_gray_fft) if face_gray_fft.shape[0] >= 32 else 0.0
             except Exception:
                 fft_score = 0.0
@@ -1173,7 +1208,7 @@ class ModelManager:
 
             # Signal 6: Chrominance high-frequency (CrCb Laplacian std)
             try:
-                ycrcb_face = cv2.cvtColor(f_rgb[y1:y2, x1:x2], cv2.COLOR_RGB2YCrCb)
+                ycrcb_face = cv2.cvtColor(face_crop, cv2.COLOR_RGB2YCrCb)
                 cr_hp = float(np.std(cv2.Laplacian(ycrcb_face[:, :, 1].astype(np.float64), cv2.CV_64F)))
                 cb_hp = float(np.std(cv2.Laplacian(ycrcb_face[:, :, 2].astype(np.float64), cv2.CV_64F)))
                 chroma_hp_max = max(cr_hp, cb_hp)
@@ -1188,17 +1223,12 @@ class ModelManager:
                 "deepfake_score": round(vit_score, 4),
                 "ela_face": round(ela_val, 3),
                 "lap_var": round(lap_var, 1),
+                "em_ratio": round(em_ratio, 2),
                 "noise_ratio": round(noise_ratio, 4),
                 "fft_face": round(fft_score, 4),
                 "chroma_hp": round(chroma_hp_max, 2),
                 "face_detected": is_face,
             })
-
-            logger.info(
-                f"[FRAME {i+1}/{len(frames)}] ViT={vit_score:.2%} ELA={ela_val:.2f} "
-                f"Lap={lap_var:.0f} Noise={noise_ratio:.3f} FFT={fft_score:.3f} "
-                f"ChromaHP={chroma_hp_max:.1f}"
-            )
 
         # Fallback if ViT offline
         if not frame_vit_scores:
@@ -1210,91 +1240,102 @@ class ModelManager:
 
         infer_duration_ms = round((time.time() - t_infer_start) * 1000, 2)
 
-        # 4. Multi-Signal Continuous Fusion Formula
+        # 5. Aggregate Visual Evidence
         max_vit = float(np.max(frame_vit_scores))
         mean_vit = float(np.mean(frame_vit_scores))
         avg_ela = float(np.mean(frame_ela_values))
         avg_lap = float(np.mean(frame_lap_vars))
+        avg_em = float(np.mean(frame_em_ratios))
         max_noise = float(np.max(frame_noise_ratios))
         avg_fft = float(np.mean(frame_fft_scores))
         max_chroma_hp = float(np.max(frame_chroma_hp))
 
-        # ViT primary signal (face-crop based)
-        vit_primary = max_vit if max_vit > 0.40 else min(1.0, mean_vit * 2.0)
-
-        # Forensic boost signals (independent evidence channels)
-        boost = 0.0
+        visual_evidence = 0.0
         boost_signals: List[str] = []
 
-        # Smoothness: over-smoothed face indicates neural generation/face-swap
+        # Signal A: ViT neural pattern
+        if max_vit > 0.60:
+            visual_evidence += 0.60
+            boost_signals.append(f"Model ViT mendeteksi pola manipulasi wajah sintetis ({max_vit:.1%})")
+        elif max_vit > 0.35:
+            visual_evidence += 0.30
+            boost_signals.append(f"Model ViT menemukan anomali wajah sedang ({max_vit:.1%})")
+
+        # Signal B: Eye vs Mouth sharpness disparity (Wav2Lip / SadTalker / AI lipsync)
+        if avg_em < 0.45 and avg_lap > 50:
+            visual_evidence += 0.50
+            boost_signals.append(f"Disparitas ketajaman bibir vs mata (Rasio: {avg_em:.2f}, indikasi sinkronisasi bibir AI / Wav2Lip)")
+
+        # Signal C: Over-smoothing / Avatar synthesis
         if avg_lap < 25:
-            boost += 0.40
-            boost_signals.append(f"Wajah ekstrem halus (Laplacian={avg_lap:.0f}, normal >100)")
-        elif avg_lap < 50:
-            boost += 0.25
-            boost_signals.append(f"Wajah sangat halus (Laplacian={avg_lap:.0f}, normal >100)")
+            visual_evidence += 0.55
+            boost_signals.append(f"Tekstur wajah sangat halus / kartun AI (Laplacian={avg_lap:.1f}, normal >100)")
+        elif avg_lap < 55:
+            visual_evidence += 0.35
+            boost_signals.append(f"Tekstur pori-pori wajah memudar (Laplacian={avg_lap:.1f})")
 
-        # ELA: elevated face ELA above typical camera baseline (~0.4-0.9)
+        # Signal D: ELA compression anomaly
         if avg_ela > 2.0:
-            boost += 0.30
-            boost_signals.append(f"Anomali ELA kuat pada wajah ({avg_ela:.2f}, baseline <0.9)")
-        elif avg_ela > 1.3:
-            boost += 0.20
-            boost_signals.append(f"Anomali ELA sedang pada wajah ({avg_ela:.2f}, baseline <0.9)")
-        elif avg_ela > 1.0:
-            boost += 0.10
-            boost_signals.append(f"ELA wajah sedikit di atas baseline ({avg_ela:.2f})")
+            visual_evidence += 0.50
+            boost_signals.append(f"Anomali kompresi ELA kuat pada area wajah ({avg_ela:.2f}, baseline <0.9)")
+        elif avg_ela > 1.25:
+            visual_evidence += 0.25
+            boost_signals.append(f"Tingkat error ELA wajah elevated ({avg_ela:.2f})")
 
-        # Noise inconsistency: face and background have different noise characteristics
+        # Signal E: Chroma high-pass / FFT frequency anomalies
+        if max_chroma_hp > 8.0 or avg_fft > 0.70:
+            visual_evidence += 0.45
+            boost_signals.append(f"Artefak frekuensi / krominansi sintetis (FFT={avg_fft:.2f}, Chroma={max_chroma_hp:.1f})")
+
+        # Signal F: Sensor noise mismatch
         if max_noise > 0.40:
-            boost += 0.15
-            boost_signals.append(f"Inkonsistensi noise wajah-background ({max_noise:.2f})")
+            visual_evidence += 0.20
+            boost_signals.append(f"Inkonsistensi noise sensor wajah vs latar ({max_noise:.2f})")
 
-        # FFT extreme: clear frequency domain generation artifacts
-        if avg_fft > 0.80:
-            boost += 0.15
-            boost_signals.append(f"Artefak frekuensi generasi terdeteksi (FFT={avg_fft:.2f})")
-
-        # Chrominance HP extreme: face with unnatural chroma patterns
-        if max_chroma_hp > 8.0:
-            boost += 0.20
-            boost_signals.append(f"Anomali krominansi ekstrem pada wajah (HP={max_chroma_hp:.1f})")
-
-        # Multi-tier evidence fusion with conservative thresholds
-        if vit_primary > 0.50 and boost >= 0.10:
-            # Strong ViT + corroborating forensic evidence -> high confidence
-            avg_score = min(0.95, 0.70 + (vit_primary + boost) * 0.15)
-        elif vit_primary > 0.50:
-            # Strong ViT alone -> moderate-high confidence
-            avg_score = vit_primary * 0.75
-        elif vit_primary > 0.10:
-            if boost >= 0.15:
-                # Moderate ViT + forensic corroboration
-                avg_score = min(0.85, 0.35 + vit_primary * 0.5 + boost * 0.4)
+        # 6. Multimodal Audiovisual Fusion
+        if has_audio and audio_fake_prob is not None:
+            if audio_fake_prob >= 0.60:
+                # Video contains confirmed synthetic AI voice (TTS / voice clone)
+                if visual_evidence >= 0.25:
+                    avg_score = max(0.85, 0.60 * audio_fake_prob + 0.40 * min(1.0, visual_evidence * 1.5))
+                else:
+                    avg_score = max(0.75, audio_fake_prob * 0.90)
+                boost_signals.append(f"Audio Video Terkonfirmasi AI Voice / TTS ({audio_fake_prob:.1%})")
+            elif audio_fake_prob < 0.10:
+                # Video contains authentic human microphone voice
+                if visual_evidence >= 0.45:
+                    # Authentic audio but strong visual face-swap / lipsync evidence
+                    avg_score = min(0.92, 0.45 + visual_evidence * 0.50)
+                elif visual_evidence >= 0.25:
+                    avg_score = 0.20 + visual_evidence * 0.30
+                else:
+                    # Both audio and visual are authentic human
+                    avg_score = max(0.03, min(0.12, 0.50 * audio_fake_prob + 0.08 * visual_evidence))
             else:
-                # Moderate ViT, no corroboration -> cautious low score
-                avg_score = vit_primary * 0.35
-        elif boost >= 0.40:
-            # No ViT evidence but strong combined forensic signals
-            avg_score = min(0.75, 0.30 + boost * 0.5)
-        elif boost >= 0.20:
-            # No ViT evidence but moderate forensic signals
-            avg_score = min(0.50, 0.15 + boost * 0.5)
-        elif boost >= 0.08:
-            # Weak forensic signals detected
-            avg_score = 0.08 + boost * 0.4
+                # Moderate audio or acoustic anomalies present (e.g. vocoder / cloned speech)
+                if visual_evidence >= 0.30:
+                    avg_score = min(0.90, 0.35 + audio_fake_prob * 0.40 + visual_evidence * 0.60)
+                else:
+                    avg_score = max(0.15, audio_fake_prob * 0.70 + visual_evidence * 0.50)
         else:
-            # No significant evidence -> assessed as clean
-            avg_score = max(0.03, 0.03 + boost * 0.3)
+            # Video without audio track (or silent / synthetic video clip)
+            if visual_evidence >= 0.45:
+                # Multiple strong corroborating forensic signals (ELA + FFT + Smoothness etc.)
+                avg_score = min(0.95, 0.55 + visual_evidence * 0.45)
+            elif visual_evidence >= 0.35:
+                avg_score = min(0.70, 0.30 + visual_evidence * 0.40)
+            else:
+                # Weak or uncorroborated single signal -> clean baseline
+                avg_score = max(0.04, visual_evidence * 0.35)
 
         avg_score = max(0.03, min(0.98, float(avg_score)))
 
         total_duration_ms = round((time.time() - t_overall_start) * 1000, 2)
 
         logger.info(
-            f"[VIDEO INFERENCE COMPLETED] ViT Primary: {vit_primary:.2%} | "
-            f"Forensic Boost: {boost:.2f} ({len(boost_signals)} signals) | "
-            f"Final Score: {avg_score:.2%} | Total: {total_duration_ms}ms"
+            f"[VIDEO INFERENCE COMPLETED] Visual Evidence: {visual_evidence:.2f} | "
+            f"Audio Score: {audio_fake_prob if audio_fake_prob is not None else 'N/A'} | "
+            f"Final Composite Score: {avg_score:.2%} | Total: {total_duration_ms}ms"
         )
 
         # Format per-frame scores for technical detail
@@ -1313,23 +1354,29 @@ class ModelManager:
             notes = [
                 f"Telah diekstrak dan dianalisis {len(frames)} frame representatif dari video.",
                 f"Decoder backend: {extract_meta.get('tier_used', 'unknown')} ({extract_duration_ms}ms).",
-                f"Model: {self.vision_model_name} + Multi-Signal Forensics ({infer_duration_ms}ms).",
+                f"Model: {self.vision_model_name} + Multimodal Audiovisual Forensics ({infer_duration_ms}ms).",
                 f"Skor per-frame ViT: {', '.join(frame_breakdown)}.",
-                f"ELA Wajah: {avg_ela:.2f} | Sharpness: {avg_lap:.0f} | Noise: {max_noise:.3f}.",
-                f"Skor Risiko Komposit Multi-Signal: {avg_score:.1%}.",
+                f"ELA Wajah: {avg_ela:.2f} | Sharpness: {avg_lap:.0f} | Lipsync Ratio: {avg_em:.2f} | Noise: {max_noise:.3f}.",
+                f"Skor Risiko Komposit Multimodal: {avg_score:.1%}.",
             ]
 
+        if has_audio and audio_fake_prob is not None:
+            notes.append(f"Analisis Akustik Suara Video: {audio_fake_prob:.1%} deepfake voice probability ({audio_dur:.1f}s).")
+
         if boost_signals:
-            notes.append(f"Sinyal Forensik Aktif: {'; '.join(boost_signals)}.")
+            notes.append(f"Sinyal Forensik Terdeteksi: {'; '.join(boost_signals)}.")
 
         if video_forensics.get("notes"):
             notes.extend(video_forensics["notes"])
 
         metadata = {
             "model_name": self.vision_model_name,
-            "architecture": "Multi-Signal Forensic Engine (ViT + ELA + Noise + FFT + Chroma + Sharpness)",
+            "architecture": "Multimodal Audiovisual Deepfake Detection Engine (ViT + Audio Biometrics + ELA + Lipsync + Noise + FFT + Chroma)",
             "frames_analyzed": len(frames),
             "is_single_image": is_single_image,
+            "has_audio": has_audio,
+            "audio_fake_prob": round(audio_fake_prob, 4) if audio_fake_prob is not None else None,
+            "audio_duration_sec": round(audio_dur, 2) if has_audio else None,
             "frame_scores": [round(s, 4) for s in frame_vit_scores],
             "frame_breakdown": ", ".join(frame_breakdown),
             "frame_diagnostics": frame_diagnostics,
@@ -1337,16 +1384,18 @@ class ModelManager:
             "vit_score_max": round(max_vit, 4),
             "ela_face_avg": round(avg_ela, 3),
             "face_sharpness_avg": round(avg_lap, 1),
+            "lipsync_em_ratio_avg": round(avg_em, 2),
             "noise_ratio_max": round(max_noise, 4),
             "fft_face_avg": round(avg_fft, 4),
             "chroma_hp_max": round(max_chroma_hp, 2),
-            "forensic_boost": round(boost, 3),
+            "visual_evidence": round(visual_evidence, 3),
             "forensic_boost_signals": boost_signals,
             "forensic_anomaly_score": round(float(video_forensics.get("forensic_anomaly_score", 0.0)), 4),
             "temporal_anomaly": video_forensics.get("temporal_anomaly", False),
             "recompression_detected": video_forensics.get("recompression_detected", False),
             "extract_tier": extract_meta.get("tier_used"),
             "extract_duration_ms": extract_duration_ms,
+            "audio_duration_ms": audio_duration_ms,
             "infer_duration_ms": infer_duration_ms,
             "total_duration_ms": total_duration_ms,
             "notes": notes,

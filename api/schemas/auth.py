@@ -7,6 +7,8 @@ class RegisterRequest(BaseModel):
     name: str
     email: EmailStr
     password: str
+    security_question: Optional[str] = None
+    security_answer: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -29,3 +31,23 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class ForgotPasswordQuestionRequest(BaseModel):
+    email: EmailStr
+
+
+class ForgotPasswordQuestionResponse(BaseModel):
+    email: str
+    security_question: str
+
+
+class ResetPasswordRequest(BaseModel):
+    email: EmailStr
+    security_answer: str
+    new_password: str
+
+
+class ResetPasswordResponse(BaseModel):
+    status: str
+    message: str

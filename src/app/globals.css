@@ -1,16 +1,18 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
-  --color-mist: #F3F6F4;
-  --color-ink: #10322C;
-  --color-primary: #2F6F62;
-  --color-accent: #D9A441;
-  --color-muted: #8A938E;
+  --color-mist: #F4F7F5;
+  --color-ink: #0D2823;
+  --color-primary: #1F6B5C;
+  --color-accent: #D69E2E;
+  --color-muted: #5A6D66;
   --color-caution: #C98A3B;
 
-  --font-display: var(--font-display), "Fraunces", Georgia, serif;
-  --font-body: var(--font-body), "Atkinson Hyperlegible", system-ui, sans-serif;
-  --font-mono: var(--font-mono), "IBM Plex Mono", monospace;
+  --font-display: var(--font-sans), "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-body: var(--font-sans), "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-mono: var(--font-mono), "JetBrains Mono", monospace;
 
   --radius-sm: 8px;
   --radius-DEFAULT: 14px;
@@ -18,245 +20,137 @@
   --radius-lg: 16px;
   --radius-xl: 20px;
   --radius-2xl: 24px;
+  --radius-3xl: 32px;
 }
 
-
 /* =========================================================
-   LIGHT MODE
+   LIGHT & DARK MODE TOKENS & DYNAMIC BACKGROUNDS
    ========================================================= */
 
 :root {
-  --background: #F3F6F4;
-  --foreground: #10322C;
+  --background: #F4F7F5;
+  --foreground: #0D2823;
 
   --surface: #FFFFFF;
-  --surface-secondary: #F3F6F4;
-  --border: rgba(138, 147, 142, 0.2);
-  --text-primary: #10322C;
-  --text-secondary: #66736D;
+  --surface-secondary: #EAF0EC;
+  --border: rgba(13, 40, 35, 0.08);
+  --text-primary: #0D2823;
+  --text-secondary: #52665F;
 }
-
-
-/* =========================================================
-   DARK MODE
-   ========================================================= */
 
 .dark {
-  --background: #111827;
-  --foreground: #F3F4F6;
+  --background: #08100E;
+  --foreground: #F2F7F5;
 
-  --surface: #1F2937;
-  --surface-secondary: #111827;
-  --border: rgba(255, 255, 255, 0.1);
-  --text-primary: #F3F4F6;
-  --text-secondary: #9CA3AF;
+  --surface: #101D19;
+  --surface-secondary: #0B1412;
+  --border: rgba(242, 247, 245, 0.08);
+  --text-primary: #F2F7F5;
+  --text-secondary: #9DB0AA;
 
-  --color-mist: #111827;
-  --color-ink: #F3F4F6;
-  --color-primary: #5FAF9F;
-  --color-accent: #E5B85C;
-  --color-muted: #9CA3AF;
-  --color-caution: #D9A052;
+  --color-mist: #08100E;
+  --color-ink: #F2F7F5;
+  --color-primary: #38A189;
+  --color-accent: #F6C85F;
+  --color-muted: #9DB0AA;
+  --color-caution: #E2A03F;
 }
 
+/* =========================================================
+   BUTTERY SMOOTH THEME TRANSITION
+   ========================================================= */
+
+html.theme-transition,
+html.theme-transition *,
+html.theme-transition *::before,
+html.theme-transition *::after {
+  transition: background-color 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              fill 0.3s ease,
+              stroke 0.3s ease,
+              box-shadow 0.4s ease !important;
+}
 
 /* =========================================================
-   HTML
+   BASE STYLING & TEXTURED NON-GENERIC CANVAS
    ========================================================= */
 
 html {
-  font-size: 18px;
+  font-size: 17px;
+  scroll-behavior: smooth;
 }
-
-
-/* =========================================================
-   BODY
-   ========================================================= */
 
 body {
   background-color: var(--background);
   color: var(--foreground);
-
-  font-family: var(--font-body),
-    "Atkinson Hyperlegible",
-    sans-serif;
-
+  font-family: var(--font-body);
   line-height: 1.6;
-
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  transition:
-    background-color 0.25s ease,
-    color 0.25s ease;
+  /* Rich Light Mode Background Mesh & Subtle Depth */
+  background-image: 
+    radial-gradient(rgba(31, 107, 92, 0.12) 1.2px, transparent 1.2px),
+    linear-gradient(135deg, rgba(244, 247, 245, 1) 0%, rgba(238, 244, 241, 0.95) 50%, rgba(244, 247, 245, 1) 100%),
+    radial-gradient(ellipse 80% 50% at 85% -10%, rgba(31, 107, 92, 0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 10% 100%, rgba(214, 158, 46, 0.06) 0%, transparent 60%);
+  background-size: 28px 28px, 100% 100%, 100% 100%, 100% 100%;
+  background-attachment: fixed;
 }
 
-
-/* =========================================================
-   HEADINGS
-   ========================================================= */
-
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  font-family: var(--font-display),
-    "Fraunces",
-    Georgia,
-    serif;
-
-  color: var(--foreground);
+.dark body {
+  /* Rich Dark Mode Obsidian Cyber-Forensic Background */
+  background-image: 
+    radial-gradient(rgba(56, 161, 137, 0.16) 1.2px, transparent 1.2px),
+    linear-gradient(180deg, #070F0D 0%, #0A1412 50%, #070F0D 100%),
+    radial-gradient(ellipse 80% 50% at 85% -10%, rgba(31, 107, 92, 0.22) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 10% 100%, rgba(13, 40, 35, 0.4) 0%, transparent 60%);
+  background-size: 28px 28px, 100% 100%, 100% 100%, 100% 100%;
+  background-attachment: fixed;
 }
 
-
-/* =========================================================
-   NAVBAR
-   ========================================================= */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  letter-spacing: -0.025em;
+}
 
 header {
-  background-color: color-mix(
-    in srgb,
-    var(--background) 90%,
-    transparent
-  );
-
+  background-color: color-mix(in srgb, var(--background) 80%, transparent);
   border-color: var(--border);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
 }
 
-
-/* =========================================================
-   LIGHT MODE ELEMENTS
-   ========================================================= */
-
-.bg-white {
-  background-color: var(--surface);
+/* Premium Glass Cards */
+.glass-card {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(13, 40, 35, 0.08);
+  box-shadow: 0 10px 30px -5px rgba(13, 40, 35, 0.04), 0 2px 6px -1px rgba(13, 40, 35, 0.02);
 }
 
-.bg-mist {
-  background-color: var(--surface-secondary);
+.dark .glass-card {
+  background: rgba(16, 29, 25, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 14px 40px -8px rgba(0, 0, 0, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
 }
 
-.text-ink {
-  color: var(--text-primary);
+/* Subtle Interactive Card Accent */
+.glass-card-interactive {
+  transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.25s ease, border-color 0.25s ease;
 }
 
-.text-muted {
-  color: var(--text-secondary);
+.glass-card-interactive:hover {
+  transform: translateY(-2px);
+  border-color: rgba(31, 107, 92, 0.25);
+  box-shadow: 0 16px 40px -10px rgba(13, 40, 35, 0.08);
 }
 
-
-/* =========================================================
-   DARK MODE ELEMENTS
-   ========================================================= */
-
-.dark .bg-white {
-  background-color: #1F2937;
-}
-
-.dark .bg-mist {
-  background-color: #111827;
-}
-
-.dark .text-ink {
-  color: #F3F4F6;
-}
-
-.dark .text-muted {
-  color: #9CA3AF;
-}
-
-
-/* =========================================================
-   BORDER
-   ========================================================= */
-
-.dark .border-muted\/20 {
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-
-/* =========================================================
-   HOVER
-   ========================================================= */
-
-.dark .hover\:bg-mist:hover {
-  background-color: #1F2937;
-}
-
-
-/* =========================================================
-   FORM / INPUT
-   ========================================================= */
-
-.dark input,
-.dark textarea,
-.dark select {
-  background-color: #1F2937;
-  color: #F3F4F6;
-  border-color: #374151;
-}
-
-.dark input::placeholder,
-.dark textarea::placeholder {
-  color: #9CA3AF;
-}
-
-
-/* =========================================================
-   CARD
-   ========================================================= */
-
-.dark .card {
-  background-color: #1F2937;
-  border-color: #374151;
-}
-
-
-/* =========================================================
-   LINK
-   ========================================================= */
-
-.dark a {
-  transition:
-    color 0.2s ease,
-    background-color 0.2s ease;
-}
-
-
-/* =========================================================
-   BUTTON
-   ========================================================= */
-
-button {
-  transition:
-    background-color 0.2s ease,
-    color 0.2s ease,
-    border-color 0.2s ease,
-    transform 0.2s ease;
-}
-
-
-/* =========================================================
-   DARK MODE SCROLLBAR
-   ========================================================= */
-
-.dark {
-  scrollbar-color: #4B5563 #111827;
-}
-
-
-/* =========================================================
-   SMOOTH THEME TRANSITION
-   ========================================================= */
-
-* {
-  transition-property:
-    background-color,
-    border-color,
-    color;
-
-  transition-duration: 200ms;
-  transition-timing-function: ease;
+.dark .glass-card-interactive:hover {
+  border-color: rgba(56, 161, 137, 0.3);
+  box-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.7);
 }

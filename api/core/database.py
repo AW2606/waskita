@@ -73,5 +73,15 @@ def init_db():
                     logger.info("Migrating schema: Adding safe_word_updated_at to users table...")
                     conn.execute(text("ALTER TABLE users ADD COLUMN safe_word_updated_at DATETIME DEFAULT NULL"))
                     conn.commit()
+
+                if "security_question" not in columns:
+                    logger.info("Migrating schema: Adding security_question to users table...")
+                    conn.execute(text("ALTER TABLE users ADD COLUMN security_question VARCHAR(255) DEFAULT NULL"))
+                    conn.commit()
+
+                if "security_answer_hash" not in columns:
+                    logger.info("Migrating schema: Adding security_answer_hash to users table...")
+                    conn.execute(text("ALTER TABLE users ADD COLUMN security_answer_hash VARCHAR(255) DEFAULT NULL"))
+                    conn.commit()
     except Exception as e:
         logger.warning(f"Schema migration notice: {e}")

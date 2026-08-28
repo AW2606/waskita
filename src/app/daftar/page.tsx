@@ -4,16 +4,30 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
-import { User, Lock, Mail, ArrowRight, Loader2, Sparkles } from "lucide-react";
-import { Navbar } from "@/components/Navbar";
-import { Footer } from "@/components/Footer";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faCircleNotch,
+  faArrowRight,
+  faExclamationCircle,
+} from "@fortawesome/free-solid-svg-icons";
+import { AuthLayoutCard } from "@/components/auth/AuthLayoutCard";
 import { registerUser } from "@/lib/api";
 
-export default function DaftarPage() {
+const SECURITY_QUESTIONS = [
+  "Apa nama hewan peliharaan pertama Anda?",
+  "Di kota mana orang tua Anda pertama kali bertemu?",
+  "Apa nama sekolah dasar pertama Anda?",
+  "Apa makanan favorit masa kecil Anda?",
+  "Apa nama jalan tempat tinggal masa kecil Anda?",
+];
+
+export default function RegisterPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [securityQuestion, setSecurityQuestion] = useState(SECURITY_QUESTIONS[0]);
+  const [securityAnswer, setSecurityAnswer] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -26,13 +40,22 @@ export default function DaftarPage() {
       return;
     }
 
+    if (!securityAnswer.trim()) {
+      setErrorMessage("Harap isi jawaban pertanyaan pemulihan keamanan.");
+      return;
+    }
+
     setIsLoading(true);
 
     try {
-      // 1. Call Backend Register
-      await registerUser({ name, email, password });
+      await registerUser({
+        name,
+        email,
+        password,
+        security_question: securityQuestion,
+        security_answer: securityAnswer,
+      });
 
-      // 2. Automatically Sign In via NextAuth
       const signInRes = await signIn("credentials", {
         email,
         password,
@@ -40,7 +63,6 @@ export default function DaftarPage() {
       });
 
       if (!signInRes || signInRes.error) {
-        // Registration succeeded, route to login if auto-login failed
         router.push("/login");
       } else {
         router.push("/verifikasi");
@@ -51,7 +73,7 @@ export default function DaftarPage() {
       let msg = "Terjadi kesalahan saat mendaftar.";
       if (err instanceof Error) {
         if (err.message.includes("Failed to fetch") || err.name === "TypeError") {
-          msg = "Tidak dapat terhubung ke Server Backend (Port 8000). Pastikan server backend FastAPI sudah dijalankan.";
+          msg = "Tidak dapat terhubung ke server backend FastAPI.";
         } else {
           msg = err.message;
         }
@@ -63,117 +85,123 @@ export default function DaftarPage() {
   };
 
   return (
-    <div className="min-h-screen bg-mist text-ink flex flex-col justify-between selection:bg-primary/20 selection:text-ink">
-      <Navbar />
-
-      <main className="flex-1 w-full max-w-md mx-auto px-6 py-12 sm:py-16 flex flex-col justify-center">
-        <div className="bg-white p-8 sm:p-10 rounded-3xl border border-muted/20 shadow-sm space-y-6">
-          {/* Header */}
-          <div className="text-center space-y-2">
-            <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary mx-auto flex items-center justify-center border border-primary/20 shadow-xs mb-3">
-              <Sparkles className="w-6 h-6 text-primary" />
-            </div>
-            <h1 className="font-display font-semibold text-2xl sm:text-3xl text-ink">
-              Daftar Akun Waskita
-            </h1>
-            <p className="font-body text-muted text-sm sm:text-base">
-              Mulai lindungi diri dan keluarga dari ancaman penipuan digital AI.
-            </p>
-          </div>
-
-          {/* Error Message Banner */}
-          {errorMessage && (
-            <div className="p-4 bg-caution/15 text-ink border border-caution/40 rounded-xl text-sm font-body">
-              {errorMessage}
-            </div>
-          )}
-
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="block font-body text-sm font-medium text-ink">
-                Nama Lengkap
-              </label>
-              <div className="relative">
-                <User className="w-5 h-5 text-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Nama Anda"
-                  className="w-full pl-11 pr-4 py-3 rounded-xl border border-muted/30 focus:border-primary focus:ring-2 focus:ring-primary/20 bg-mist/30 text-ink font-body text-base outline-none transition-all"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="block font-body text-sm font-medium text-ink">
-                Alamat Email
-              </label>
-              <div className="relative">
-                <Mail className="w-5 h-5 text-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="nama@email.com"
-                  className="w-full pl-11 pr-4 py-3 rounded-xl border border-muted/30 focus:border-primary focus:ring-2 focus:ring-primary/20 bg-mist/30 text-ink font-body text-base outline-none transition-all"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="block font-body text-sm font-medium text-ink">
-                Kata Sandi
-              </label>
-              <div className="relative">
-                <Lock className="w-5 h-5 text-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="password"
-                  required
-                  minLength={6}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Minimal 6 karakter"
-                  className="w-full pl-11 pr-4 py-3 rounded-xl border border-muted/30 focus:border-primary focus:ring-2 focus:ring-primary/20 bg-mist/30 text-ink font-body text-base outline-none transition-all"
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full inline-flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white font-body font-medium text-base py-3.5 rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed mt-2"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Membuat Akun...</span>
-                </>
-              ) : (
-                <>
-                  <span>Daftar Sekarang</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
-              )}
-            </button>
-          </form>
-
-          {/* Footer Link to Login */}
-          <div className="pt-2 text-center border-t border-muted/20">
-            <p className="font-body text-sm text-muted">
-              Sudah memiliki akun?{" "}
-              <Link href="/login" className="text-primary font-semibold hover:underline">
-                Masuk di sini
-              </Link>
-            </p>
-          </div>
+    <AuthLayoutCard title="Register">
+      {/* Error Notification */}
+      {errorMessage && (
+        <div className="p-3.5 rounded-2xl bg-[#E85D4E]/15 border border-[#E85D4E]/30 text-[#FFB2A8] text-xs flex items-center gap-2.5 animate-in fade-in">
+          <FontAwesomeIcon icon={faExclamationCircle} className="w-4 h-4 text-[#FF8E80] shrink-0" />
+          <span>{errorMessage}</span>
         </div>
-      </main>
+      )}
 
-      <Footer />
-    </div>
+      <form onSubmit={handleSubmit} className="space-y-3.5">
+        {/* Full Name Field */}
+        <div className="space-y-1 text-left">
+          <label className="block text-xs font-semibold text-[#D4E8E1] tracking-wide">
+            Full Name
+          </label>
+          <input
+            type="text"
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Enter your full name"
+            className="w-full px-5 py-2.5 rounded-full bg-[#0D241D]/90 border border-white/15 text-white placeholder-white/30 text-sm focus:border-[#4EA699] focus:ring-2 focus:ring-[#4EA699]/30 outline-none transition-all shadow-inner"
+          />
+        </div>
+
+        {/* Email Field */}
+        <div className="space-y-1 text-left">
+          <label className="block text-xs font-semibold text-[#D4E8E1] tracking-wide">
+            Email Address
+          </label>
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Enter your email"
+            className="w-full px-5 py-2.5 rounded-full bg-[#0D241D]/90 border border-white/15 text-white placeholder-white/30 text-sm focus:border-[#4EA699] focus:ring-2 focus:ring-[#4EA699]/30 outline-none transition-all shadow-inner"
+          />
+        </div>
+
+        {/* Password Field */}
+        <div className="space-y-1 text-left">
+          <label className="block text-xs font-semibold text-[#D4E8E1] tracking-wide">
+            Password
+          </label>
+          <input
+            type="password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Min. 6 characters"
+            className="w-full px-5 py-2.5 rounded-full bg-[#0D241D]/90 border border-white/15 text-white placeholder-white/30 text-sm focus:border-[#4EA699] focus:ring-2 focus:ring-[#4EA699]/30 outline-none transition-all shadow-inner"
+          />
+        </div>
+
+        {/* Security Backup Question (Pertanyaan Pemulihan) */}
+        <div className="space-y-1 text-left pt-1">
+          <label className="block text-xs font-semibold text-[#D4E8E1] tracking-wide">
+            Pertanyaan Keamanan (Pemulihan Sandi)
+          </label>
+          <select
+            value={securityQuestion}
+            onChange={(e) => setSecurityQuestion(e.target.value)}
+            className="w-full px-4 py-2.5 rounded-full bg-[#0D241D]/90 border border-white/15 text-white text-xs sm:text-sm focus:border-[#4EA699] focus:ring-2 focus:ring-[#4EA699]/30 outline-none transition-all cursor-pointer"
+          >
+            {SECURITY_QUESTIONS.map((q, idx) => (
+              <option key={idx} value={q} className="bg-[#143229] text-white">
+                {q}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Security Answer Field */}
+        <div className="space-y-1 text-left">
+          <input
+            type="text"
+            required
+            value={securityAnswer}
+            onChange={(e) => setSecurityAnswer(e.target.value)}
+            placeholder="Jawaban pemulihan Anda"
+            className="w-full px-5 py-2.5 rounded-full bg-[#0D241D]/90 border border-white/15 text-white placeholder-white/30 text-sm focus:border-[#4EA699] focus:ring-2 focus:ring-[#4EA699]/30 outline-none transition-all shadow-inner"
+          />
+        </div>
+
+        {/* Submit Button */}
+        <div className="pt-2">
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full py-3.5 px-6 rounded-full bg-[#4E9B8F] hover:bg-[#5CB4A6] text-white font-bold text-sm sm:text-base shadow-[0_4px_16px_rgba(78,155,143,0.35)] hover:shadow-[0_6px_22px_rgba(78,155,143,0.5)] transition-all active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
+          >
+            {isLoading ? (
+              <>
+                <FontAwesomeIcon icon={faCircleNotch} className="w-4 h-4 animate-spin" />
+                <span>Mendaftarkan Akun...</span>
+              </>
+            ) : (
+              <>
+                <span>Register to Waskita</span>
+                <FontAwesomeIcon icon={faArrowRight} className="w-3.5 h-3.5" />
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+
+      {/* Switch to Login */}
+      <div className="text-center pt-2 text-xs text-[#9DC4B9]">
+        Already have an account?{" "}
+        <Link
+          href="/login"
+          className="text-[#54B7A5] hover:text-white font-semibold underline underline-offset-2 transition-colors"
+        >
+          Login Now
+        </Link>
+      </div>
+    </AuthLayoutCard>
   );
 }

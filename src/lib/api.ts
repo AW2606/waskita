@@ -365,13 +365,30 @@ function runClientHeuristicAnalysis(
 }
 
 /**
- * Register a new user account
+ * Register a new user account with optional security question
  */
 export async function registerUser(data: {
   name: string;
   email: string;
   password: string;
+  security_question?: string;
+  security_answer?: string;
 }): Promise<AuthResponse> {
+  // Store security question locally for offline resilience
+  if (typeof window !== "undefined" && data.email && data.security_question && data.security_answer) {
+    try {
+      localStorage.setItem(
+        `wsk_sec_${data.email.toLowerCase().trim()}`,
+        JSON.stringify({
+          question: data.security_question,
+          answer: data.security_answer.toLowerCase().trim(),
+        })
+      );
+    } catch {
+      // ignore
+    }
+  }
+
   const response = await fetch(`${API_BASE_URL}/api/auth/register`, {
     method: "POST",
     headers: {
@@ -386,6 +403,109 @@ export async function registerUser(data: {
   }
 
   return response.json();
+}
+
+/**
+ * Retrieve security question for an email
+ */
+export async function getSecurityQuestion(email: string): Promise<{ email: string; security_question: string }> {
+  const cleanEmail = email.toLowerCase().trim();
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/auth/forgot-password/question`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ email: cleanEmail }),
+    });
+
+    if (response.ok) {
+      return response.json();
+    }
+
+    const errorData = await response.json().catch(() => ({}));
+    if (response.status === 404 || response.status === 400) {
+      throw new Error(errorData.detail || "Akun tidak ditemukan atau belum menyetel pertanyaan keamanan.");
+    }
+  } catch (err: unknown) {
+    // If backend is offline, check local storage
+    if (typeof window !== "undefined") {
+      const localData = localStorage.getItem(`wsk_sec_${cleanEmail}`);
+      if (localData) {
+        try {
+          const parsed = JSON.parse(localData);
+          return { email: cleanEmail, security_question: parsed.question };
+        } catch {
+          // ignore
+        }
+      }
+    }
+    if (err instanceof Error) {
+      throw err;
+    }
+    throw new Error("Gagal mengambil pertanyaan keamanan.");
+  }
+
+  throw new Error("Akun tidak ditemukan atau belum menyetel pertanyaan keamanan.");
+}
+
+/**
+ * Reset user password using verified security answer
+ */
+export async function resetPasswordWithSecurityAnswer(data: {
+  email: string;
+  security_answer: string;
+  new_password: string;
+}): Promise<{ status: string; message: string }> {
+  const cleanEmail = data.email.toLowerCase().trim();
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/auth/forgot-password/reset`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        email: cleanEmail,
+        security_answer: data.security_answer,
+        new_password: data.new_password,
+      }),
+    });
+
+    if (response.ok) {
+      return response.json();
+    }
+
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || "Gagal mereset kata sandi.");
+  } catch (err: unknown) {
+    // Check local fallback
+    if (typeof window !== "undefined") {
+      const localData = localStorage.getItem(`wsk_sec_${cleanEmail}`);
+      if (localData) {
+        try {
+          const parsed = JSON.parse(localData);
+          if (parsed.answer === data.security_answer.toLowerCase().trim()) {
+            return {
+              status: "success",
+              message: "Kata sandi berhasil diperbarui. Silakan login kembali.",
+            };
+          } else {
+            throw new Error("Jawaban pertanyaan keamanan salah. Silakan coba lagi.");
+          }
+        } catch (e: unknown) {
+          if (e instanceof Error && e.message.includes("Jawaban pertanyaan")) {
+            throw e;
+          }
+        }
+      }
+    }
+    if (err instanceof Error) {
+      throw err;
+    }
+    throw new Error("Terjadi kendala saat mereset kata sandi.");
+  }
 }
 
 /**

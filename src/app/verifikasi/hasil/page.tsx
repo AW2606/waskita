@@ -4,34 +4,36 @@ import React, { useState, useEffect, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  ChevronDown,
-  ChevronUp,
-  Phone,
-  HelpCircle,
-  RotateCcw,
-  ShieldCheck,
-  Info,
-  Loader2,
-  Calendar,
-  Layers,
-  Mic,
-  AlertTriangle,
-  ThumbsUp,
-  ThumbsDown,
-  CheckCircle2,
-  ExternalLink,
-  Video,
-  Share2,
-  Sparkles,
-  Flag,
-  Users,
-  X,
-} from "lucide-react";
+  faShieldHalved,
+  faTriangleExclamation,
+  faCircleCheck,
+  faInfoCircle,
+  faPhone,
+  faKey,
+  faThumbsUp,
+  faThumbsDown,
+  faRotateRight,
+  faChevronDown,
+  faChevronUp,
+  faFlag,
+  faUsers,
+  faXmark,
+  faCircleNotch,
+  faArrowRight,
+  faWaveSquare,
+} from "@fortawesome/free-solid-svg-icons";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { ClarityGauge } from "@/components/ClarityGauge";
-import { getVerification, submitVerificationFeedback, reportNumber, getReportCount, VerificationData } from "@/lib/api";
+import {
+  getVerification,
+  submitVerificationFeedback,
+  reportNumber,
+  getReportCount,
+  VerificationData,
+} from "@/lib/api";
 
 function HasilContent() {
   const searchParams = useSearchParams();
@@ -44,7 +46,6 @@ function HasilContent() {
 
   // Feedback State
   const [feedbackSubmitted, setFeedbackSubmitted] = useState<boolean>(false);
-  const [feedbackIsPositive, setFeedbackIsPositive] = useState<boolean | null>(null);
   const [feedbackLoading, setFeedbackLoading] = useState<boolean>(false);
 
   // Report Number State
@@ -60,7 +61,6 @@ function HasilContent() {
   useEffect(() => {
     async function loadData() {
       if (!verificationId) {
-        // Fallback default sample data if accessed directly without id
         setData({
           id: "WSK-SAMPLE-01",
           content_type: "suara",
@@ -100,7 +100,6 @@ function HasilContent() {
     loadData();
   }, [verificationId, token]);
 
-  // Extract phone number from technical_detail for report feature
   const extractedPhone = React.useMemo(() => {
     if (!data) return "";
     const ct = data.content_type?.toLowerCase();
@@ -110,7 +109,6 @@ function HasilContent() {
     return match ? match[1].trim() : "";
   }, [data]);
 
-  // Fetch community report count when phone number is available
   useEffect(() => {
     if (!extractedPhone) return;
     getReportCount(extractedPhone).then((res) => {
@@ -141,7 +139,6 @@ function HasilContent() {
     try {
       await submitVerificationFeedback(data.id, isPositive);
       setFeedbackSubmitted(true);
-      setFeedbackIsPositive(isPositive);
     } catch (err) {
       console.error("Error submitting feedback:", err);
     } finally {
@@ -151,33 +148,28 @@ function HasilContent() {
 
   if (loading || !data) {
     return (
-      <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
-        <Loader2 className="w-8 h-8 text-primary animate-spin" />
+      <div className="min-h-screen bg-mist text-ink flex flex-col items-center justify-center space-y-4">
+        <FontAwesomeIcon icon={faCircleNotch} className="w-8 h-8 text-primary animate-spin" />
         <p className="font-body text-muted text-base">
-          Mengambil data hasil analisis dari database...
+          Mengambil data hasil analisis forensik...
         </p>
       </div>
     );
   }
 
-  // Calculate score for gauge needle
   let gaugeValue = data.score || 50;
   if (!data.score) {
     if (data.risk_level === "tenang") gaugeValue = 22;
-    else if (data.risk_level === "sangat_waspada") gaugeValue = 86;
+    else if (data.risk_level === "sangat_waspada") gaugeValue = 88;
     else gaugeValue = 52;
   }
 
-  // Parse structured information from technical_detail
   const techLines = (data.technical_detail || "").split("\n");
   const extractedInfo = {
     transcribedText: "",
-    acousticScoreStr: "",
-    contentScoreStr: "",
     intentLabel: "",
     intentSummary: "",
     detectedKeywords: "",
-    modeCategories: "",
     detectedLinks: "",
     recompressionDetected: false,
     communityCached: false,
@@ -193,14 +185,8 @@ function HasilContent() {
       extractedInfo.intentLabel = trimmed.replace(/.*Klasifikasi Niat \(Intent\):\s*/, "");
     } else if (trimmed.includes("Konteks Niat:")) {
       extractedInfo.intentSummary = trimmed.replace(/.*Konteks Niat:\s*/, "");
-    } else if (trimmed.includes("Skor Probabilitas Deepfake (Akustik):")) {
-      extractedInfo.acousticScoreStr = trimmed.replace(/.*Skor Probabilitas Deepfake \(Akustik\):\s*/, "");
-    } else if (trimmed.includes("Skor Risiko Modus Penipuan (Konten):")) {
-      extractedInfo.contentScoreStr = trimmed.replace(/.*Skor Risiko Modus Penipuan \(Konten\):\s*/, "");
     } else if (trimmed.includes("Indikator Frasa Berisiko Terdeteksi:") || trimmed.includes("Indikator Frasa Terdeteksi:")) {
       extractedInfo.detectedKeywords = trimmed.replace(/.*Indikator Frasa (?:Berisiko )?Terdeteksi:\s*/, "");
-    } else if (trimmed.includes("Kategori Modus:") || trimmed.includes("Kategori Modus Teridentifikasi:")) {
-      extractedInfo.modeCategories = trimmed.replace(/.*Kategori Modus (?:Teridentifikasi)?:\s*/, "");
     } else if (trimmed.includes("Tautan URL Terdeteksi:")) {
       extractedInfo.detectedLinks = trimmed.replace(/.*Tautan URL Terdeteksi:\s*/, "");
     } else if (trimmed.includes("kompresi berulang") || trimmed.includes("WhatsApp")) {
@@ -218,59 +204,64 @@ function HasilContent() {
   });
 
   return (
-    <div className="min-h-screen bg-mist text-ink flex flex-col justify-between selection:bg-primary/20 selection:text-ink">
+    <div className="min-h-screen bg-mist text-ink flex flex-col justify-between selection:bg-primary/20 selection:text-ink relative overflow-x-clip">
+      
       <Navbar />
 
-      <main className="flex-1 w-full max-w-4xl mx-auto px-6 sm:px-8 py-10 sm:py-16 space-y-8 sm:space-y-10">
-        {/* Header Summary */}
-        <div className="text-center space-y-2 max-w-xl mx-auto">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary font-mono text-base font-bold uppercase tracking-wider">
-            <ShieldCheck className="w-3.5 h-3.5" />
-            Analisis Berhasil
+      <main className="flex-1 w-full max-w-4xl mx-auto px-6 sm:px-8 py-10 sm:py-16 space-y-10 relative z-10">
+        
+        {/* =========================================================================
+            1. HEADER SUMMARY & STATUS BAR
+            ========================================================================= */}
+        <div className="space-y-3 text-left">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-mono text-muted border-b border-muted/15 pb-4">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-primary" />
+              <span className="text-primary font-bold">ANALISIS SELESAI</span>
+              <span>//</span>
+              <span>ID: {data.id}</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="uppercase">TIPE: {data.content_type}</span>
+              {extractedInfo.communityCached && (
+                <>
+                  <span>·</span>
+                  <span className="text-primary font-semibold">Sidik Jari Komunitas</span>
+                </>
+              )}
+            </div>
           </div>
-          <h1 className="font-display font-semibold text-3xl sm:text-4xl text-ink tracking-tight">
-            Ringkasan Kejernihan Konten
-          </h1>
-          <div className="flex items-center justify-center gap-3 text-xs font-mono text-muted pt-1">
-            <span className="flex items-center gap-1">
-              <Layers className="w-3.5 h-3.5" /> ID: {data.id}
-            </span>
-            <span>•</span>
-            <span className="flex items-center gap-1">
-              <Calendar className="w-3.5 h-3.5" /> Tipe: {data.content_type.toUpperCase()}
-            </span>
-            {extractedInfo.communityCached && (
-              <>
-                <span>•</span>
-                <span className="text-primary font-semibold flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" /> Terverifikasi Komunitas
-                </span>
-              </>
-            )}
+
+          <div className="space-y-1">
+            <h1 className="font-display font-extrabold text-3xl sm:text-4xl text-ink tracking-tight">
+              Hasil Verifikasi Kejernihan
+            </h1>
+            <p className="font-body text-muted text-base">
+              Rangkuman tingkat risiko rekayasa dan panduan tindakan berdasarkan pembedahan forensik.
+            </p>
           </div>
         </div>
 
-        {/* Main Result Card with Radar Kejernihan */}
-        <div className="bg-white p-8 sm:p-12 rounded-3xl border border-muted/20 shadow-sm space-y-8">
-          {/* Main Result Presentation (Radar Gauge or Fail-Closed Inconclusive Card) */}
+        {/* =========================================================================
+            2. RADAR KEJERNIHAN (Visual Centerpiece)
+            ========================================================================= */}
+        <div className="p-8 sm:p-12 rounded-3xl border border-muted/20 bg-white/80 dark:bg-[#101D19]/80 backdrop-blur-xl shadow-xs space-y-8">
+          
           {data.risk_level === "tidak_dapat_diperiksa" ? (
-            <div className="p-6 sm:p-8 rounded-3xl bg-amber-500/10 border-2 border-amber-500/30 text-center space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-amber-500/20 text-amber-700 flex items-center justify-center mx-auto shadow-2xs">
-                <AlertTriangle className="w-7 h-7" />
+            <div className="p-7 rounded-3xl bg-caution/10 border-2 border-caution/30 text-center space-y-4">
+              <div className="w-12 h-12 rounded-2xl bg-caution/20 text-caution flex items-center justify-center mx-auto">
+                <FontAwesomeIcon icon={faTriangleExclamation} className="w-6 h-6" />
               </div>
               <div className="space-y-1.5 max-w-lg mx-auto">
-                <span className="font-mono text-xs text-amber-800 uppercase tracking-wider font-semibold block">
-                  [ STATUS: TIDAK DAPAT DIPERIKSA ]
+                <span className="font-mono text-xs text-caution uppercase tracking-wider font-bold block">
+                  STATUS: TIDAK DAPAT DIPERIKSA
                 </span>
-                <h2 className="font-display font-semibold text-2xl text-ink">
-                  Media Tidak Dapat Dianalisis Sistem
+                <h2 className="font-display font-bold text-2xl text-ink">
+                  Media Tidak Dapat Dianalisis
                 </h2>
                 <p className="font-body text-sm sm:text-base text-ink/80 leading-relaxed">
                   {data.explanation}
                 </p>
-              </div>
-              <div className="p-4 rounded-xl bg-white/90 border border-amber-500/20 text-xs sm:text-sm text-amber-950 max-w-lg mx-auto text-left font-medium">
-                🛡️ <strong>Prinsip Keamanan WASKITA:</strong> Sistem menolak memberikan vonis aman secara otomatis saat ekstraksi media gagal. Lakukan verifikasi manual langsung melalui panggilan telepon atau tatap muka.
               </div>
             </div>
           ) : (
@@ -279,110 +270,67 @@ function HasilContent() {
             </div>
           )}
 
-          {/* Single Image / Static Photo Uncertainty Disclaimer Banner */}
+          {/* Single Photo Disclaimer */}
           {data.content_type.toLowerCase() === "video" && extractedInfo.isSinglePhoto && (
-            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-700 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5" />
-              </div>
+            <div className="p-4 rounded-2xl bg-caution/10 border border-caution/30 flex items-start gap-3.5 text-left">
+              <FontAwesomeIcon icon={faTriangleExclamation} className="w-5 h-5 text-caution mt-0.5 shrink-0" />
               <div className="space-y-0.5">
-                <span className="font-mono text-2xs text-amber-800 uppercase tracking-wider font-semibold block">
-                  Perhatian Khusus Foto Tunggal
+                <span className="font-mono text-xs text-caution uppercase tracking-wider font-bold block">
+                  Catatan Analisis Foto Tunggal
                 </span>
                 <p className="font-body text-xs sm:text-sm text-ink/90 leading-relaxed font-medium">
-                  Analisis foto tunggal memiliki tingkat ketidakpastian lebih tinggi dibanding video — hasil ini sangat disarankan diverifikasi manual.
+                  Analisis foto tunggal memiliki tingkat ketidakpastian lebih tinggi dibanding video multikerangka. Sangat disarankan untuk memverifikasi secara langsung.
                 </p>
               </div>
             </div>
           )}
 
-          {/* Video Temporal & Compression Badge */}
-          {data.content_type.toLowerCase() === "video" && extractedInfo.recompressionDetected && (
-            <div className="p-4 rounded-2xl bg-caution/10 border border-caution/30 flex items-start gap-3.5">
-              <div className="w-10 h-10 rounded-xl bg-caution/20 text-caution flex items-center justify-center shrink-0">
-                <Video className="w-5 h-5" />
-              </div>
-              <div className="space-y-1">
-                <span className="font-mono text-xs text-caution uppercase tracking-wider font-semibold block">
-                  Pemberitahuan Forensik Kompresi Video
-                </span>
-                <p className="font-body text-xs sm:text-sm text-ink/80 leading-relaxed">
-                  Video terdeteksi mengalami kompresi berulang (khas media yang diteruskan berkali-kali di WhatsApp/medsos). Kompresi berat dapat menyamarkan detail mikro manipulasi visual.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Plain Language Explanation Card (Real Data) */}
-          <div className="p-6 sm:p-7 bg-mist/80 rounded-2xl border border-muted/30 space-y-2 text-center sm:text-left">
-            <h2 className="font-display font-semibold text-xl text-ink flex items-center justify-center sm:justify-start gap-2">
-              <Info className="w-5 h-5 text-primary shrink-0" />
-              Penjelasan Hasil Analisis
+          {/* Explanation Card */}
+          <div className="p-6 sm:p-7 rounded-2xl bg-mist/60 dark:bg-white/[0.03] border border-muted/20 space-y-2 text-left">
+            <h2 className="font-display font-bold text-lg sm:text-xl text-ink flex items-center gap-2">
+              <FontAwesomeIcon icon={faInfoCircle} className="w-4 h-4 text-primary" />
+              <span>Penjelasan Hasil Analisis</span>
             </h2>
             <p className="font-body text-ink/90 text-base sm:text-lg leading-relaxed">
               {data.explanation}
             </p>
           </div>
 
-          {/* Phishing / Malicious Link Detection Box (If Found) */}
+          {/* Phishing Alert Box (If Link Detected) */}
           {extractedInfo.detectedLinks && (
-            <div className="p-5 rounded-2xl bg-caution/15 border-2 border-caution/40 space-y-2.5">
-              <div className="flex items-center gap-2 text-caution font-display font-semibold text-base">
-                <AlertTriangle className="w-5 h-5" />
-                Peringatan Tautan / Link Phishing Berbahaya Terdeteksi:
+            <div className="p-5 rounded-2xl bg-caution/15 border-2 border-caution/40 space-y-2.5 text-left">
+              <div className="flex items-center gap-2 text-caution font-display font-bold text-base">
+                <FontAwesomeIcon icon={faTriangleExclamation} className="w-4 h-4" />
+                <span>Tautan Phishing Berbahaya Terdeteksi:</span>
               </div>
-              <p className="font-body text-xs sm:text-sm text-ink leading-relaxed">
-                Pesan ini menyertakan tautan situs web yang berisiko tinggi mencuri akun atau data pribadi Anda:
-              </p>
-              <div className="p-3 bg-white/90 rounded-xl font-mono text-xs text-ink/90 break-all border border-caution/30 flex items-center justify-between gap-2">
-                <span>{extractedInfo.detectedLinks}</span>
-                <span className="px-2 py-0.5 rounded bg-caution/20 text-caution font-bold uppercase text-2xs shrink-0">
-                  Risiko Phishing
-                </span>
+              <div className="p-3 bg-white dark:bg-black/40 rounded-xl font-mono text-xs text-ink/90 break-all border border-caution/30">
+                {extractedInfo.detectedLinks}
               </div>
               <p className="font-body text-xs text-muted">
-                ⚠️ Jangan pernah membuka atau memasukkan nomor rekening, PIN, atau kata sandi Anda ke halaman tautan tersebut.
+                Jangan membuka atau memasukkan data perbankan ke tautan tersebut.
               </p>
             </div>
           )}
 
-          {/* Context & Threat Indicators Card (XAI) */}
-          {(extractedInfo.intentLabel || extractedInfo.detectedKeywords || data.content_type.toLowerCase() === "pesan") && (
-            <div className="p-6 rounded-2xl bg-white border border-primary/20 shadow-2xs space-y-3.5">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="font-display font-semibold text-base text-ink flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-primary" />
-                  Klasifikasi Niat & Konteks Analisis:
+          {/* Context & Intent Keywords (XAI) */}
+          {(extractedInfo.intentLabel || extractedInfo.detectedKeywords) && (
+            <div className="p-6 rounded-2xl bg-mist/40 dark:bg-white/[0.02] border border-muted/20 space-y-3 text-left">
+              <div className="flex items-center justify-between">
+                <h3 className="font-display font-bold text-base text-ink flex items-center gap-2">
+                  <FontAwesomeIcon icon={faWaveSquare} className="w-4 h-4 text-primary" />
+                  <span>Konteks Rekayasa & Frasa Kunci:</span>
                 </h3>
-                <span className="font-mono text-xs px-2.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                  Explainable AI (XAI)
+                <span className="font-mono text-2xs px-2 py-0.5 rounded bg-primary/10 text-primary font-bold uppercase">
+                  Explainable AI
                 </span>
               </div>
 
-              <div className="p-4 rounded-xl bg-mist/60 border border-muted/20 space-y-2">
-                <div className="font-display font-semibold text-sm sm:text-base text-ink flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-primary shrink-0" />
-                  <span>
-                    {extractedInfo.intentLabel || (data.risk_level === "tenang" ? "Konteks Media Wajar / Alami" : "Analisis Struktur Niat & Modus")}
-                  </span>
-                </div>
-                <p className="font-body text-xs sm:text-sm text-ink/80 leading-relaxed">
-                  {extractedInfo.intentSummary ||
-                    (data.risk_level === "tenang"
-                      ? "Tidak ditemukan indikator desakan kejahatan digital maupun manipulasi neural berbahaya pada sampel ini."
-                      : "Sistem memeriksa indikator pola manipulasi buatan dan desakan tindakan berisiko.")}
-                </p>
-              </div>
-
               {extractedInfo.detectedKeywords && (
-                <div className="pt-1 flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-xs text-muted font-medium flex items-center gap-1">
-                    <Info className="w-3.5 h-3.5" /> Frasa Teridentifikasi dalam Konteks:
-                  </span>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
                   {extractedInfo.detectedKeywords.split(",").map((kw: string, i: number) => (
                     <span
                       key={i}
-                      className="px-2.5 py-0.5 rounded-lg bg-mist text-ink font-body text-xs font-medium border border-muted/30"
+                      className="px-2.5 py-1 rounded-lg bg-white dark:bg-white/5 text-ink font-body text-xs font-medium border border-muted/20"
                     >
                       {kw.trim()}
                     </span>
@@ -393,57 +341,52 @@ function HasilContent() {
           )}
 
           {/* Action Recommendations */}
-          <div className="space-y-4">
-            <h3 className="font-display font-semibold text-lg text-ink text-center sm:text-left">
-              Langkah Bijak yang Disarankan:
+          <div className="space-y-4 text-left">
+            <h3 className="font-display font-bold text-lg text-ink">
+              Langkah Tindakan yang Disarankan:
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="p-5 rounded-2xl bg-white border border-muted/30 shadow-2xs space-y-2 flex flex-col justify-between">
-                <div className="space-y-2">
-                  <div className="w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
-                    <Phone className="w-5 h-5" />
-                  </div>
-                  <h4 className="font-display font-semibold text-base text-ink">
-                    1. Hubungi Nomor Resmi Sendiri
-                  </h4>
-                  <p className="font-body text-muted text-sm leading-relaxed">
-                    Jangan gunakan kontak yang diberikan dalam pesan. Hubungi kontak resmi dari buku kontak pribadi Anda.
-                  </p>
+              <div className="p-5 rounded-2xl bg-white dark:bg-white/[0.03] border border-muted/20 space-y-2">
+                <div className="w-9 h-9 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                  <FontAwesomeIcon icon={faPhone} className="w-4 h-4" />
                 </div>
+                <h4 className="font-display font-bold text-base text-ink">
+                  1. Hubungi Jalur Resmi Mandiri
+                </h4>
+                <p className="font-body text-muted text-xs sm:text-sm leading-relaxed">
+                  Jangan gunakan nomor yang diberikan dalam pesan. Hubungi nomor resmi yang tersimpan di kontak pribadi Anda.
+                </p>
               </div>
 
-              <div className="p-5 rounded-2xl bg-white border border-muted/30 shadow-2xs space-y-2 flex flex-col justify-between">
-                <div className="space-y-2">
-                  <div className="w-9 h-9 rounded-xl bg-accent/15 text-accent flex items-center justify-center">
-                    <HelpCircle className="w-5 h-5 text-ink" />
-                  </div>
-                  <h4 className="font-display font-semibold text-base text-ink">
-                    2. Tanyakan Fakta Keluarga / Safe Word
-                  </h4>
-                  <p className="font-body text-muted text-sm leading-relaxed">
-                    Tanyakan kata sandi rahasia keluarga Anda atau hal masa lalu yang hanya diketahui keluarga inti.
-                  </p>
+              <div className="p-5 rounded-2xl bg-white dark:bg-white/[0.03] border border-muted/20 space-y-2">
+                <div className="w-9 h-9 rounded-xl bg-accent/15 text-accent flex items-center justify-center">
+                  <FontAwesomeIcon icon={faKey} className="w-4 h-4 text-ink dark:text-white" />
                 </div>
+                <h4 className="font-display font-bold text-base text-ink">
+                  2. Konfirmasi Kata Sandi Keluarga
+                </h4>
+                <p className="font-body text-muted text-xs sm:text-sm leading-relaxed">
+                  Tanyakan kode rahasia atau fakta masa lalu yang hanya diketahui oleh keluarga inti Anda.
+                </p>
               </div>
             </div>
           </div>
 
-          {/* Interactive Feedback Loop Widget (Human-in-the-Loop) */}
-          <div className="p-5 rounded-2xl bg-mist/60 border border-muted/30 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="space-y-0.5 text-center sm:text-left">
-              <h4 className="font-display font-semibold text-sm text-ink flex items-center justify-center sm:justify-start gap-1.5">
-                <Share2 className="w-4 h-4 text-primary" />
-                Bantu Waskita Makin Pintar
+          {/* Feedback Loop */}
+          <div className="p-5 rounded-2xl bg-mist/60 dark:bg-white/[0.02] border border-muted/20 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="space-y-0.5 text-left">
+              <h4 className="font-display font-bold text-sm text-ink">
+                Bantu Waskita Meningkatkan Akurasi
               </h4>
               <p className="font-body text-xs text-muted">
-                Apakah hasil analisis ini akurat & membantu Anda?
+                Apakah hasil analisis ini membantu situasi Anda?
               </p>
             </div>
 
             {feedbackSubmitted ? (
-              <div className="inline-flex items-center gap-1.5 text-xs font-body text-primary font-semibold bg-primary/10 px-3.5 py-1.5 rounded-xl animate-in fade-in">
-                <CheckCircle2 className="w-4 h-4" />
+              <div className="inline-flex items-center gap-1.5 text-xs font-body text-primary font-bold bg-primary/10 px-3.5 py-1.5 rounded-xl">
+                <FontAwesomeIcon icon={faCircleCheck} className="w-4 h-4" />
                 <span>Terima kasih atas masukan Anda!</span>
               </div>
             ) : (
@@ -452,227 +395,72 @@ function HasilContent() {
                   type="button"
                   disabled={feedbackLoading}
                   onClick={() => handleFeedback(true)}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-white hover:bg-primary/10 text-ink hover:text-primary border border-muted/30 text-xs font-body font-medium transition-colors cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-white/5 hover:bg-primary/10 text-ink hover:text-primary border border-muted/20 text-xs font-body font-semibold transition-colors cursor-pointer"
                 >
-                  <ThumbsUp className="w-3.5 h-3.5" />
-                  <span>Akurat & Membantu</span>
+                  <FontAwesomeIcon icon={faThumbsUp} className="w-3.5 h-3.5" />
+                  <span>Membantu</span>
                 </button>
                 <button
                   type="button"
                   disabled={feedbackLoading}
                   onClick={() => handleFeedback(false)}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-white hover:bg-caution/10 text-ink hover:text-caution border border-muted/30 text-xs font-body font-medium transition-colors cursor-pointer disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-white dark:bg-white/5 hover:bg-caution/10 text-ink hover:text-caution border border-muted/20 text-xs font-body font-semibold transition-colors cursor-pointer"
                 >
-                  <ThumbsDown className="w-3.5 h-3.5" />
-                  <span>Laporkan Koreksi</span>
+                  <FontAwesomeIcon icon={faThumbsDown} className="w-3.5 h-3.5" />
+                  <span>Koreksi</span>
                 </button>
               </div>
             )}
           </div>
 
-          {/* Accordion / Expandable Technical Details (Real Data) */}
+          {/* Expandable Technical Details */}
           {data.technical_detail && (
-            <div className="border-t border-muted/20 pt-6">
+            <div className="border-t border-muted/15 pt-6 text-left">
               <button
                 type="button"
                 onClick={() => setIsDetailsOpen(!isDetailsOpen)}
-                className="w-full flex items-center justify-between text-left p-4 rounded-xl hover:bg-mist transition-colors cursor-pointer"
+                className="w-full flex items-center justify-between p-3 rounded-xl hover:bg-mist/50 dark:hover:bg-white/5 transition-colors cursor-pointer"
               >
-                <span className="font-body font-semibold text-ink text-base flex items-center gap-2">
-                  Kenapa hasil ini begini?
-                  <span className="font-mono text-xs text-muted font-normal">
-                    (Rincian Teknis Analisis)
-                  </span>
+                <span className="font-body font-bold text-ink text-base flex items-center gap-2">
+                  <span>Rincian Telemetri Teknis Analisis</span>
                 </span>
-                {isDetailsOpen ? (
-                  <ChevronUp className="w-5 h-5 text-muted" />
-                ) : (
-                  <ChevronDown className="w-5 h-5 text-muted" />
-                )}
+                <FontAwesomeIcon
+                  icon={isDetailsOpen ? faChevronUp : faChevronDown}
+                  className="w-4 h-4 text-muted"
+                />
               </button>
 
               {isDetailsOpen && (
-                <div className="mt-4 p-5 rounded-2xl bg-mist border border-muted/30 space-y-3 animate-in fade-in duration-200">
-                  <div className="space-y-2 font-mono text-xs sm:text-sm text-ink/80 whitespace-pre-line">
+                <div className="mt-3 p-5 rounded-2xl bg-mist/80 dark:bg-black/30 border border-muted/20 space-y-3 animate-in fade-in duration-200">
+                  <div className="font-mono text-xs text-ink/80 whitespace-pre-line leading-relaxed">
                     {data.technical_detail}
                   </div>
-
-                  {/* Responsible AI Transparency Note */}
-                  <div className="pt-2 border-t border-muted/20">
-                    <div className="p-3.5 rounded-xl bg-white border border-muted/30 text-xs font-body text-muted leading-relaxed space-y-1">
-                      <div className="font-semibold text-ink flex items-center gap-1.5">
-                        <Info className="w-3.5 h-3.5 text-primary" />
-                        Catatan Etika & Tanggung Jawab AI (Responsible AI):
-                      </div>
-                      <p>
-                        Sistem ini dikalibrasi menggunakan sampel uji terbatas dan dirancang sebagai instrumen edukasi serta penapisan awal (*early triage support*). Model akan terus disempurnakan secara bertahap melalui masukan komunitas dan tidak dimaksudkan sebagai alat pembuktian hukum mutlak.
-                      </p>
-                    </div>
-                  </div>
                 </div>
-              )}
-            </div>
-          )}
-
-          {/* Community Report Count Badge (Phone Number Results Only) */}
-          {extractedPhone && communityReportCount > 0 && (
-            <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center gap-3.5">
-              <div className="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-700 flex items-center justify-center shrink-0">
-                <Users className="w-5 h-5" />
-              </div>
-              <div className="space-y-0.5 flex-1">
-                <span className="font-mono text-xs text-amber-800 uppercase tracking-wider font-semibold block">
-                  Laporan Komunitas
-                </span>
-                <p className="font-body text-sm text-ink/90 leading-relaxed">
-                  Nomor <span className="font-mono font-semibold">{extractedPhone}</span> telah dilaporkan oleh <span className="font-semibold text-amber-800">{communityReportCount} pengguna</span> lain sebagai nomor mencurigakan.
-                </p>
-              </div>
-            </div>
-          )}
-
-          {/* Report This Number Button (Phone Number Results Only) */}
-          {extractedPhone && (
-            <div className="p-5 rounded-2xl bg-mist/60 border border-muted/30 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="space-y-0.5 text-center sm:text-left">
-                <h4 className="font-display font-semibold text-sm text-ink flex items-center justify-center sm:justify-start gap-1.5">
-                  <Flag className="w-4 h-4 text-caution" />
-                  Nomor Ini Mencurigakan?
-                </h4>
-                <p className="font-body text-xs text-muted">
-                  Bantu lindungi komunitas dengan melaporkan nomor ini.
-                </p>
-              </div>
-
-              {reportSubmitted ? (
-                <div className="inline-flex items-center gap-1.5 text-xs font-body text-primary font-semibold bg-primary/10 px-3.5 py-1.5 rounded-xl animate-in fade-in">
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>Laporan berhasil dikirim!</span>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!token) {
-                      alert("Silakan login terlebih dahulu untuk melaporkan nomor.");
-                      return;
-                    }
-                    setShowReportModal(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white hover:bg-caution/10 text-ink hover:text-caution border border-muted/30 text-sm font-body font-medium transition-colors cursor-pointer shadow-2xs"
-                >
-                  <Flag className="w-4 h-4" />
-                  <span>Laporkan Nomor Ini</span>
-                </button>
               )}
             </div>
           )}
 
           {/* Bottom Actions */}
-          <div className="pt-2 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-muted/20">
+          <div className="pt-4 flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-muted/15">
             <Link
               href="/verifikasi"
-              className="inline-flex items-center gap-2 text-primary font-body font-semibold hover:underline text-base cursor-pointer"
+              className="inline-flex items-center gap-2 text-primary font-body font-bold hover:underline text-sm sm:text-base cursor-pointer"
             >
-              <RotateCcw className="w-4 h-4" />
-              Periksa Konten Lain
+              <FontAwesomeIcon icon={faRotateRight} className="w-3.5 h-3.5" />
+              <span>Periksa Berkas Lain</span>
             </Link>
 
             <Link
               href="/belajar"
-              className="inline-flex items-center gap-2 bg-primary text-white font-body font-medium px-6 py-3 rounded-xl hover:bg-primary/90 transition-opacity text-base shadow-xs cursor-pointer"
+              className="inline-flex items-center gap-2 bg-primary text-white font-body font-bold px-6 py-3 rounded-xl hover:bg-primary/90 transition-opacity text-sm sm:text-base shadow-xs cursor-pointer"
             >
-              <span>Pelajari Pola Serupa di Sini</span>
+              <span>Pelajari Modus Serupa</span>
+              <FontAwesomeIcon icon={faArrowRight} className="w-3.5 h-3.5" />
             </Link>
           </div>
+
         </div>
 
-        {/* Report Number Modal Overlay */}
-        {showReportModal && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200"
-            onClick={() => setShowReportModal(false)}
-          >
-            <div
-              className="bg-white rounded-3xl shadow-xl w-full max-w-md p-6 sm:p-8 space-y-5 relative"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <button
-                type="button"
-                onClick={() => setShowReportModal(false)}
-                className="absolute top-4 right-4 w-8 h-8 rounded-full bg-mist hover:bg-muted/30 flex items-center justify-center text-muted hover:text-ink transition-colors cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-
-              <div className="space-y-1">
-                <h3 className="font-display font-semibold text-xl text-ink flex items-center gap-2">
-                  <Flag className="w-5 h-5 text-caution" />
-                  Laporkan Nomor Mencurigakan
-                </h3>
-                <p className="font-body text-sm text-muted">
-                  Nomor: <span className="font-mono font-semibold text-ink">{extractedPhone}</span>
-                </p>
-              </div>
-
-              <div className="space-y-2">
-                <label htmlFor="report-reason" className="font-body text-sm font-medium text-ink block">
-                  Alasan Pelaporan <span className="text-caution">*</span>
-                </label>
-                <textarea
-                  id="report-reason"
-                  value={reportReason}
-                  onChange={(e) => setReportReason(e.target.value)}
-                  placeholder="Contoh: Nomor ini menelepon mengaku sebagai polisi dan meminta transfer uang..."
-                  rows={3}
-                  maxLength={500}
-                  className="w-full px-4 py-3 rounded-xl border border-muted/40 bg-mist/50 font-body text-sm text-ink placeholder:text-muted/60 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 resize-none transition-all"
-                />
-                <p className="font-mono text-xs text-muted text-right">
-                  {reportReason.length}/500
-                </p>
-              </div>
-
-              {reportError && (
-                <div className="p-3 rounded-xl bg-caution/10 border border-caution/30 text-xs font-body text-caution font-medium">
-                  {reportError}
-                </div>
-              )}
-
-              <div className="flex items-center gap-3 pt-1">
-                <button
-                  type="button"
-                  onClick={() => setShowReportModal(false)}
-                  className="flex-1 px-4 py-2.5 rounded-xl border border-muted/30 text-ink font-body text-sm font-medium hover:bg-mist transition-colors cursor-pointer"
-                >
-                  Batal
-                </button>
-                <button
-                  type="button"
-                  onClick={handleReportSubmit}
-                  disabled={reportLoading || reportReason.trim().length < 5}
-                  className="flex-1 px-4 py-2.5 rounded-xl bg-caution text-white font-body text-sm font-semibold hover:bg-caution/90 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center justify-center gap-1.5"
-                >
-                  {reportLoading ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Mengirim...
-                    </>
-                  ) : (
-                    <>
-                      <Flag className="w-4 h-4" />
-                      Kirim Laporan
-                    </>
-                  )}
-                </button>
-              </div>
-
-              <p className="font-body text-xs text-muted text-center leading-relaxed">
-                🛡️ Identitas pelapor bersifat rahasia dan tidak akan ditampilkan kepada pengguna lain.
-              </p>
-            </div>
-          </div>
-        )}
       </main>
 
       <Footer />

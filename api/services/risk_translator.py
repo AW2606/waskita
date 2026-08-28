@@ -99,7 +99,7 @@ def translate_risk(
             if is_acoustic_threat or is_ambiguous_zone:
                 explanation = (
                     "Kami menemukan ketidaksesuaian pada dinamika frekuensi dan jeda vokal yang memiliki kemiripan dengan karakter generator vokal AI. "
-                    "Tingkat keyakinan berada pada zona menengah — sebaiknya hubungi langsung pihak yang bersangkutan melalui saluran komunikasi terpercaya."
+                    "Tingkat keyakinan berada pada zona menengah, sebaiknya hubungi langsung pihak yang bersangkutan melalui saluran komunikasi terpercaya."
                 )
             else:
                 explanation = (
@@ -113,32 +113,44 @@ def translate_risk(
             )
 
     elif content_type in ["video"]:
+        has_video_audio = metadata.get("has_audio", False)
+        video_audio_fake = metadata.get("audio_fake_prob") or 0.0
+        signals = metadata.get("forensic_boost_signals", [])
+        
         if is_educational:
             explanation = (
                 "Video ini memuat narasi edukasi / informasi publik seputar kewaspadaan kejahatan digital. "
                 "Tidak ditemukan unsur penipuan aktif atau instruksi berbahaya yang menargetkan Anda."
             )
         elif risk_level == "sangat_waspada":
-            explanation = (
-                "Terdeteksi pola artefak manipulasi visual digital (deepfake) yang kentara pada beberapa frame video. "
-                "Sangat disarankan untuk melakukan verifikasi manual dan tidak mempercayai isi video tanpa konfirmasi independen."
-            )
+            if has_video_audio and video_audio_fake >= 0.60:
+                explanation = (
+                    "Indikasi manipulasi deepfake sangat kuat terdeteksi pada video ini. "
+                    "Trek suara memuat karakteristik audio sintetis / kloning AI, disertai anomali sinkronisasi visual pada area wajah. "
+                    "Sangat disarankan untuk TIDAK mempercayai narasi dalam video ini dan lakukan konfirmasi ke sumber resmi terpercaya."
+                )
+            else:
+                explanation = (
+                    "Terdeteksi pola artefak manipulasi visual digital (deepfake) yang kentara pada frame video "
+                    "(seperti ketidakteraturan batas wajah, tekstur sintetis, atau anomali sinkronisasi bibir). "
+                    "Sangat disarankan untuk melakukan verifikasi manual dan tidak mempercayai isi video tanpa konfirmasi independen."
+                )
         elif risk_level == "perlu_diperiksa":
             if recompression_detected:
                 explanation = (
                     "Video ini mengalami penurunan kualitas akibat kompresi berulang (khas media yang diteruskan di WhatsApp/medsos). "
-                    "Meskipun ada sedikit anomali ekspresi, kualitas kompresi menyulitkan kepastian analisis. "
+                    "Meskipun ada anomali tekstur atau artikulasi wajah, kompresi menyulitkan kepastian analisis. "
                     "Lakukan verifikasi manual langsung ke sumber resmi."
                 )
             else:
                 explanation = (
-                    "Terdapat sedikit anomali pada detail tepi wajah atau artikulasi yang menyerupai efek generasi visual AI. "
-                    "Disarankan untuk melakukan verifikasi manual secara langsung."
+                    "Terdapat anomali pada tekstur pori wajah, artikulasi bibir, atau modulasi spektral yang menyerupai efek generasi visual AI. "
+                    "Tingkat keyakinan berada pada zona menengah — disarankan untuk melakukan verifikasi silang langsung."
                 )
         else:  # tenang
             explanation = (
-                "Analisis visual pada frame video menunjukkan dinamika wajah dan pencahayaan yang konsisten secara alami. "
-                "Tidak terdeteksi manipulasi deepfake visual yang mencolok."
+                "Analisis visual dan akustik pada video menunjukkan dinamika wajah, pencahayaan alami, dan gelombang suara yang konsisten. "
+                "Tidak terdeteksi pola manipulasi deepfake visual ataupun sintesis suara AI yang mencolok."
             )
 
     elif content_type in ["pesan", "text"]:

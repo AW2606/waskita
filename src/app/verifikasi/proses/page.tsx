@@ -2,7 +2,8 @@
 
 import React, { useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Sparkles } from "lucide-react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faShieldHalved } from "@fortawesome/free-solid-svg-icons";
 
 function ProsesContent() {
   const router = useRouter();
@@ -10,7 +11,7 @@ function ProsesContent() {
   const verificationId = searchParams.get("id");
 
   useEffect(() => {
-    // 2.5 second delay to simulate deepfake analysis and show arc animation
+    // 2.5 second delay to simulate deepfake analysis and show radar sweep
     const timer = setTimeout(() => {
       if (verificationId) {
         router.push(`/verifikasi/hasil?id=${verificationId}`);
@@ -23,64 +24,79 @@ function ProsesContent() {
   }, [router, verificationId]);
 
   return (
-    <div className="min-h-screen bg-mist text-ink flex flex-col items-center justify-center p-6 select-none">
-      <div className="max-w-md w-full text-center space-y-8 bg-white p-10 sm:p-12 rounded-3xl shadow-sm border border-muted/20 animate-in fade-in zoom-in-95 duration-500">
-        {/* Pulsing Arc / Gauge Animation */}
+    <div className="min-h-screen bg-mist text-ink flex flex-col items-center justify-center p-6 select-none relative overflow-hidden">
+      
+      {/* Ambient background glow */}
+      <div className="absolute w-[500px] h-[500px] bg-primary/10 rounded-full blur-[100px] pointer-events-none" />
+
+      <div className="max-w-md w-full text-center space-y-8 p-9 sm:p-11 rounded-3xl bg-white/80 dark:bg-[#101D19]/80 backdrop-blur-xl border border-muted/20 shadow-sm relative z-10">
+        
+        {/* Calibrated Radar Arc Scanner */}
         <div className="relative w-48 h-28 mx-auto flex items-center justify-center">
           <svg viewBox="0 0 200 110" className="w-full h-full overflow-visible">
+            <defs>
+              <linearGradient id="scanGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#1F6B5C" />
+                <stop offset="50%" stopColor="#D97706" />
+                <stop offset="100%" stopColor="#0D2823" />
+              </linearGradient>
+            </defs>
+
             {/* Background Arc */}
             <path
               d="M 20 100 A 80 80 0 0 1 180 100"
               fill="none"
-              stroke="#F3F6F4"
-              strokeWidth="16"
+              stroke="#E2E8E4"
+              className="dark:stroke-[#20322D]"
+              strokeWidth="14"
               strokeLinecap="round"
             />
-            {/* Animated Glowing Pulsing Arc */}
+            {/* Animated Pulsing Arc */}
             <path
               d="M 20 100 A 80 80 0 0 1 180 100"
               fill="none"
-              stroke="#2F6F62"
-              strokeWidth="16"
+              stroke="url(#scanGrad)"
+              strokeWidth="14"
               strokeLinecap="round"
               strokeDasharray="250"
-              strokeDashoffset="120"
+              strokeDashoffset="110"
               className="animate-pulse"
             />
-            {/* Scanning radar indicator orb */}
-            <circle cx="100" cy="100" r="10" fill="#2F6F62" className="animate-ping opacity-60" />
-            <circle cx="100" cy="100" r="8" fill="#10322C" />
+            {/* Radar scanner orb */}
+            <circle cx="100" cy="100" r="10" fill="#1F6B5C" className="animate-ping opacity-60" />
+            <circle cx="100" cy="100" r="7" fill="#0D2823" className="dark:fill-white" />
           </svg>
         </div>
 
-        {/* Status Text */}
-        <div className="space-y-3">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary font-mono text-xs uppercase tracking-wider">
-            <Sparkles className="w-3.5 h-3.5 animate-spin" />
-            Analisis Model & Pola Frekuensi
+        {/* Status Copy */}
+        <div className="space-y-2.5">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 text-primary font-mono text-xs uppercase tracking-wider font-bold">
+            <FontAwesomeIcon icon={faShieldHalved} className="w-3.5 h-3.5" />
+            <span>ANALISIS SPEKTROGRAM & POLA AI</span>
           </div>
-          
-          <h1 className="font-display font-semibold text-2xl sm:text-3xl text-ink tracking-tight">
-            Sedang memeriksa dengan hati-hati...
+
+          <h1 className="font-display font-bold text-2xl sm:text-3xl text-ink tracking-tight">
+            Memeriksa keaslian media...
           </h1>
-          
-          <p className="font-body text-muted text-base">
-            Ini biasanya hanya memerlukan waktu singkat.
+
+          <p className="font-body text-muted text-sm sm:text-base leading-relaxed">
+            Menganalisis 60 parameter akustik dan sinkronisasi neural secara objektif.
           </p>
         </div>
 
-        {/* Gentle scanning bars */}
+        {/* Telemetry progress line */}
         <div className="space-y-2 pt-2">
-          <div className="w-full bg-mist h-2 rounded-full overflow-hidden">
+          <div className="w-full bg-mist dark:bg-white/5 h-2 rounded-full overflow-hidden border border-muted/15">
             <div
-              className="bg-primary h-full rounded-full animate-pulse"
+              className="bg-primary h-full rounded-full animate-pulse transition-all duration-1000"
               style={{ width: "75%" }}
             />
           </div>
           <span className="font-mono text-xs text-muted block">
-            ID Verifikasi: {verificationId || "Memproses..."}
+            ID Verifikasi: {verificationId || "WSK-AUTO-RUN"}
           </span>
         </div>
+
       </div>
     </div>
   );

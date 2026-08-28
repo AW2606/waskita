@@ -4,15 +4,15 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  Menu,
-  X,
-  LogIn,
-  LogOut,
-  User,
-  Sun,
-  Moon,
-} from "lucide-react";
+  faBars,
+  faXmark,
+  faRightToBracket,
+  faRightFromBracket,
+  faSun,
+  faMoon,
+} from "@fortawesome/free-solid-svg-icons";
 
 export function Navbar() {
   const [isOpen, setIsOpen] = useState(false);
@@ -34,19 +34,25 @@ export function Navbar() {
     }
   }, []);
 
-  // Fungsi mengganti tema
+  // Fungsi mengganti tema dengan transisi mulus
   const toggleTheme = () => {
+    const root = document.documentElement;
+    root.classList.add("theme-transition");
+    
     const newDark = !isDark;
-
     setIsDark(newDark);
 
     if (newDark) {
-      document.documentElement.classList.add("dark");
+      root.classList.add("dark");
       localStorage.setItem("theme", "dark");
     } else {
-      document.documentElement.classList.remove("dark");
+      root.classList.remove("dark");
       localStorage.setItem("theme", "light");
     }
+
+    setTimeout(() => {
+      root.classList.remove("theme-transition");
+    }, 450);
   };
 
   const navLinks = [
@@ -63,26 +69,27 @@ export function Navbar() {
   };
 
   return (
-<header className="sticky top-0 z-50 w-full bg-mist/90 backdrop-blur-md border-b border-muted/20">      <div className="max-w-6xl mx-auto px-6 sm:px-8 h-20 flex items-center justify-between">
+    <header className="sticky top-0 z-50 w-full bg-white/80 dark:bg-[#070F0D]/80 backdrop-blur-2xl border-b border-muted/15 dark:border-white/10 shadow-2xs transition-colors duration-300">
+      <div className="max-w-6xl mx-auto px-6 sm:px-8 h-20 flex items-center justify-between">
         
         {/* Logo */}
         <Link
           href="/"
-          className="group flex items-center gap-3 transition-opacity hover:opacity-90"
+          className="group flex items-center gap-3 transition-transform active:scale-95"
         >
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-sm transition-transform group-hover:scale-105">
-            <span className="font-display font-bold text-xl leading-none">
+          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center text-white shadow-sm transition-transform duration-300 group-hover:scale-105 group-hover:rotate-1">
+            <span className="font-display font-extrabold text-xl leading-none">
               W
             </span>
           </div>
 
-          <span className="font-display font-semibold text-2xl tracking-tight text-ink dark:text-white">
+          <span className="font-display font-extrabold text-2xl tracking-tight text-ink dark:text-white">
             Waskita
           </span>
         </Link>
 
-        {/* Desktop Nav Links */}
-        <nav className="hidden md:flex items-center gap-1 sm:gap-2">
+        {/* Desktop Nav Deck with Smooth Floating Pill */}
+        <nav className="hidden md:inline-flex items-center p-1.5 rounded-2xl bg-black/[0.03] dark:bg-white/[0.04] border border-muted/15 dark:border-white/5 backdrop-blur-md">
           {navLinks.map((link) => {
             const active = isActive(link.href);
 
@@ -90,10 +97,10 @@ export function Navbar() {
               <Link
                 key={link.href}
                 href={link.href}
-                className={`px-4 py-2 rounded-xl text-base font-body transition-all duration-200 ${
+                className={`relative px-4 py-2 rounded-xl text-sm font-body transition-all duration-300 ease-out ${
                   active
-                    ? "bg-primary/10 text-primary font-semibold shadow-2xs"
-                    : "text-ink/80 dark:text-gray-300 hover:text-ink dark:hover:text-white hover:bg-muted/10 dark:hover:bg-gray-800 font-medium"
+                    ? "bg-white dark:bg-[#13221E] text-primary dark:text-[#38A189] font-bold shadow-xs border border-muted/15 dark:border-white/10 scale-[1.02]"
+                    : "text-ink/70 dark:text-gray-300 hover:text-ink dark:hover:text-white hover:bg-black/[0.02] dark:hover:bg-white/[0.03] font-medium"
                 }`}
               >
                 {link.name}
@@ -105,23 +112,22 @@ export function Navbar() {
         {/* Desktop Right Section */}
         <div className="hidden md:flex items-center gap-3">
 
-          {/* Theme Toggle */}
+          {/* Theme Toggle with Smooth Icon Morph */}
           <button
             type="button"
             onClick={toggleTheme}
             className="w-10 h-10 rounded-xl flex items-center justify-center
               text-ink dark:text-white
-              hover:bg-muted/15 dark:hover:bg-gray-800
-              border border-muted/20 dark:border-gray-700
-              transition-all duration-200 hover:scale-105 cursor-pointer"
+              hover:bg-black/[0.04] dark:hover:bg-white/10
+              border border-muted/20 dark:border-white/10
+              transition-all duration-300 hover:scale-105 active:scale-95 cursor-pointer"
             title={isDark ? "Mode Terang" : "Mode Gelap"}
             aria-label={isDark ? "Mode Terang" : "Mode Gelap"}
           >
-            {isDark ? (
-              <Sun className="w-5 h-5" />
-            ) : (
-              <Moon className="w-5 h-5" />
-            )}
+            <FontAwesomeIcon
+              icon={isDark ? faSun : faMoon}
+              className="w-4 h-4 transition-transform duration-300 rotate-0 hover:rotate-12"
+            />
           </button>
 
           {/* Desktop Auth Section */}
@@ -129,7 +135,7 @@ export function Navbar() {
             <div className="flex items-center gap-3">
 
               {/* User Profile */}
-              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-white dark:bg-gray-800 border border-muted/20 dark:border-gray-700 shadow-2xs">
+              <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-white dark:bg-[#13221E] border border-muted/20 dark:border-white/10 shadow-2xs">
                 <div className="w-6 h-6 rounded-lg bg-primary/10 text-primary flex items-center justify-center font-mono text-xs font-bold">
                   {session.user.name
                     ? session.user.name[0].toUpperCase()
@@ -145,19 +151,19 @@ export function Navbar() {
               <button
                 type="button"
                 onClick={() => signOut({ callbackUrl: "/" })}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-body text-muted dark:text-gray-400 hover:text-ink dark:hover:text-white hover:bg-muted/15 dark:hover:bg-gray-800 transition-all cursor-pointer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-body text-muted hover:text-ink dark:text-gray-400 dark:hover:text-white hover:bg-muted/15 dark:hover:bg-white/5 transition-all cursor-pointer"
                 title="Keluar dari akun"
               >
-                <LogOut className="w-4 h-4" />
+                <FontAwesomeIcon icon={faRightFromBracket} className="w-3.5 h-3.5" />
                 <span>Keluar</span>
               </button>
             </div>
           ) : (
             <Link
               href="/login"
-              className="inline-flex items-center gap-2 bg-primary hover:bg-primary/90 text-white font-body font-medium text-sm px-5 py-2.5 rounded-xl shadow-xs transition-all cursor-pointer"
+              className="inline-flex items-center gap-2 bg-primary hover:bg-primary/90 text-white font-body font-bold text-sm px-5 py-2.5 rounded-xl shadow-xs hover:shadow-md transition-all duration-200 active:scale-95 cursor-pointer"
             >
-              <LogIn className="w-4 h-4" />
+              <FontAwesomeIcon icon={faRightToBracket} className="w-3.5 h-3.5" />
               <span>Masuk</span>
             </Link>
           )}
@@ -172,91 +178,82 @@ export function Navbar() {
             onClick={toggleTheme}
             className="w-10 h-10 rounded-xl flex items-center justify-center
               text-ink dark:text-white
-              hover:bg-muted/15 dark:hover:bg-gray-800
-              border border-muted/20 dark:border-gray-700
-              transition-all cursor-pointer"
+              hover:bg-black/[0.04] dark:hover:bg-white/10
+              border border-muted/20 dark:border-white/10
+              transition-all duration-200 cursor-pointer"
             title={isDark ? "Mode Terang" : "Mode Gelap"}
             aria-label={isDark ? "Mode Terang" : "Mode Gelap"}
           >
-            {isDark ? (
-              <Sun className="w-5 h-5" />
-            ) : (
-              <Moon className="w-5 h-5" />
-            )}
+            <FontAwesomeIcon icon={isDark ? faSun : faMoon} className="w-4 h-4" />
           </button>
 
-          {/* Mobile Hamburger */}
+          {/* Mobile Hamburger Button */}
           <button
+            type="button"
             onClick={() => setIsOpen(!isOpen)}
-            className="p-2.5 rounded-xl text-ink dark:text-white hover:bg-muted/15 dark:hover:bg-gray-800 transition-colors cursor-pointer"
+            className="w-10 h-10 rounded-xl flex items-center justify-center
+              text-ink dark:text-white
+              hover:bg-black/[0.04] dark:hover:bg-white/10
+              border border-muted/20 dark:border-white/10
+              transition-all duration-200 cursor-pointer"
+            aria-expanded={isOpen}
             aria-label="Toggle Menu"
           >
-            {isOpen ? (
-              <X className="w-6 h-6" />
-            ) : (
-              <Menu className="w-6 h-6" />
-            )}
+            <FontAwesomeIcon icon={isOpen ? faXmark : faBars} className="w-4 h-4" />
           </button>
         </div>
       </div>
 
-      {/* Mobile Menu Dropdown */}
+      {/* Mobile Nav Menu Drawer */}
       {isOpen && (
-        <div className="md:hidden bg-white dark:bg-gray-900 border-b border-muted/20 dark:border-gray-700 px-6 py-4 space-y-3 shadow-lg animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="md:hidden border-t border-muted/15 bg-white/95 dark:bg-[#070F0D]/95 backdrop-blur-2xl px-6 py-6 space-y-4 animate-in slide-in-from-top-2 duration-200">
+          <nav className="flex flex-col space-y-2">
+            {navLinks.map((link) => {
+              const active = isActive(link.href);
 
-          {navLinks.map((link) => {
-            const active = isActive(link.href);
+              return (
+                <Link
+                  key={link.href}
+                  href={link.href}
+                  onClick={() => setIsOpen(false)}
+                  className={`px-4 py-3 rounded-xl text-base font-body transition-colors ${
+                    active
+                      ? "bg-primary/10 text-primary font-bold"
+                      : "text-ink dark:text-gray-200 hover:bg-muted/10 font-medium"
+                  }`}
+                >
+                  {link.name}
+                </Link>
+              );
+            })}
+          </nav>
 
-            return (
-              <Link
-                key={link.href}
-                href={link.href}
-                onClick={() => setIsOpen(false)}
-                className={`block px-4 py-3 rounded-xl text-base font-body transition-all ${
-                  active
-                    ? "bg-primary/10 text-primary font-semibold"
-                    : "text-ink dark:text-gray-300 hover:bg-mist dark:hover:bg-gray-800 font-medium"
-                }`}
-              >
-                {link.name}
-              </Link>
-            );
-          })}
-
-          <div className="pt-2 border-t border-muted/20 dark:border-gray-700">
-
+          <div className="pt-4 border-t border-muted/15 flex flex-col space-y-3">
             {status === "authenticated" && session?.user ? (
-              <div className="space-y-2">
-
-                {/* Mobile User */}
-                <div className="flex items-center gap-2 px-3 py-2 text-sm font-body text-muted dark:text-gray-400">
-                  <User className="w-4 h-4 text-primary" />
-                  <span className="truncate">
-                    {session.user.name || session.user.email}
-                  </span>
+              <div className="space-y-3">
+                <div className="px-4 py-2 text-sm text-muted font-body">
+                  Masuk sebagai: <strong className="text-ink dark:text-white">{session.user.name || session.user.email}</strong>
                 </div>
-
-                {/* Mobile Logout */}
                 <button
                   type="button"
                   onClick={() => {
                     setIsOpen(false);
                     signOut({ callbackUrl: "/" });
                   }}
-                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-base font-body bg-mist dark:bg-gray-800 text-ink dark:text-white hover:bg-muted/20 dark:hover:bg-gray-700 transition-all cursor-pointer"
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-muted/15 text-ink dark:text-white font-body text-base font-medium cursor-pointer"
                 >
-                  <LogOut className="w-4 h-4" />
-                  <span>Keluar dari Akun</span>
+                  <FontAwesomeIcon icon={faRightFromBracket} className="w-4 h-4" />
+                  <span>Keluar</span>
                 </button>
               </div>
             ) : (
               <Link
                 href="/login"
                 onClick={() => setIsOpen(false)}
-                className="w-full inline-flex items-center justify-center gap-2 bg-primary text-white font-body font-medium text-base px-4 py-3 rounded-xl shadow-xs"
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-primary text-white font-body text-base font-semibold shadow-xs cursor-pointer"
               >
-                <LogIn className="w-4 h-4" />
-                <span>Masuk ke Akun</span>
+                <FontAwesomeIcon icon={faRightToBracket} className="w-4 h-4" />
+                <span>Masuk Akun</span>
               </Link>
             )}
           </div>

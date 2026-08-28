@@ -4,9 +4,13 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
-import { ShieldCheck, Lock, Mail, ArrowRight, Loader2 } from "lucide-react";
-import { Navbar } from "@/components/Navbar";
-import { Footer } from "@/components/Footer";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faCircleNotch,
+  faArrowRight,
+  faExclamationCircle,
+} from "@fortawesome/free-solid-svg-icons";
+import { AuthLayoutCard } from "@/components/auth/AuthLayoutCard";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -42,99 +46,86 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-mist text-ink flex flex-col justify-between selection:bg-primary/20 selection:text-ink">
-      <Navbar />
+    <AuthLayoutCard title="Login">
+      {/* Error Notification */}
+      {errorMessage && (
+        <div className="p-3.5 rounded-2xl bg-[#E85D4E]/15 border border-[#E85D4E]/30 text-[#FFB2A8] text-xs flex items-center gap-2.5 animate-in fade-in">
+          <FontAwesomeIcon icon={faExclamationCircle} className="w-4 h-4 text-[#FF8E80] shrink-0" />
+          <span>{errorMessage}</span>
+        </div>
+      )}
 
-      <main className="flex-1 w-full max-w-md mx-auto px-6 py-12 sm:py-16 flex flex-col justify-center">
-        <div className="bg-white p-8 sm:p-10 rounded-3xl border border-muted/20 shadow-sm space-y-6">
-          {/* Header */}
-          <div className="text-center space-y-2">
-            <div className="w-12 h-12 rounded-2xl bg-primary/10 text-primary mx-auto flex items-center justify-center border border-primary/20 shadow-xs mb-3">
-              <ShieldCheck className="w-6 h-6 text-primary" />
-            </div>
-            <h1 className="font-display font-semibold text-2xl sm:text-3xl text-ink">
-              Masuk ke Waskita
-            </h1>
-            <p className="font-body text-muted text-sm sm:text-base">
-              Akses riwayat verifikasi dan pemantauan perlindungan keluarga Anda.
-            </p>
-          </div>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Username / Email Field */}
+        <div className="space-y-1.5 text-left">
+          <label className="block text-xs font-semibold text-[#D4E8E1] tracking-wide">
+            Username / Email
+          </label>
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Enter your email"
+            className="w-full px-5 py-3 rounded-full bg-[#0D241D]/90 border border-white/15 text-white placeholder-white/30 text-sm focus:border-[#4EA699] focus:ring-2 focus:ring-[#4EA699]/30 outline-none transition-all shadow-inner"
+          />
+        </div>
 
-          {/* Error Message Banner */}
-          {errorMessage && (
-            <div className="p-4 bg-caution/15 text-ink border border-caution/40 rounded-xl text-sm font-body">
-              {errorMessage}
-            </div>
-          )}
-
-          {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="block font-body text-sm font-medium text-ink">
-                Alamat Email
-              </label>
-              <div className="relative">
-                <Mail className="w-5 h-5 text-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="contoh@email.com"
-                  className="w-full pl-11 pr-4 py-3 rounded-xl border border-muted/30 focus:border-primary focus:ring-2 focus:ring-primary/20 bg-mist/30 text-ink font-body text-base outline-none transition-all"
-                />
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="block font-body text-sm font-medium text-ink">
-                Kata Sandi
-              </label>
-              <div className="relative">
-                <Lock className="w-5 h-5 text-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full pl-11 pr-4 py-3 rounded-xl border border-muted/30 focus:border-primary focus:ring-2 focus:ring-primary/20 bg-mist/30 text-ink font-body text-base outline-none transition-all"
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={isLoading}
-              className="w-full inline-flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white font-body font-medium text-base py-3.5 rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed mt-2"
+        {/* Password Field */}
+        <div className="space-y-1.5 text-left">
+          <label className="block text-xs font-semibold text-[#D4E8E1] tracking-wide">
+            Password
+          </label>
+          <input
+            type="password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Enter your password"
+            className="w-full px-5 py-3 rounded-full bg-[#0D241D]/90 border border-white/15 text-white placeholder-white/30 text-sm focus:border-[#4EA699] focus:ring-2 focus:ring-[#4EA699]/30 outline-none transition-all shadow-inner"
+          />
+          <div className="text-right pt-0.5">
+            <Link
+              href="/lupa-sandi"
+              className="text-[11px] text-[#54B7A5] hover:text-[#78DFCEx] hover:underline transition-colors"
             >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span>Memeriksa Akun...</span>
-                </>
-              ) : (
-                <>
-                  <span>Masuk Sekarang</span>
-                  <ArrowRight className="w-4 h-4" />
-                </>
-              )}
-            </button>
-          </form>
-
-          {/* Footer Link to Register */}
-          <div className="pt-2 text-center border-t border-muted/20">
-            <p className="font-body text-sm text-muted">
-              Belum memiliki akun?{" "}
-              <Link href="/daftar" className="text-primary font-semibold hover:underline">
-                Daftar sekarang
-              </Link>
-            </p>
+              Forgot Password?
+            </Link>
           </div>
         </div>
-      </main>
 
-      <Footer />
-    </div>
+        {/* Submit Button (Pill Seafoam Teal) */}
+        <div className="pt-2">
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full py-3.5 px-6 rounded-full bg-[#4E9B8F] hover:bg-[#5CB4A6] text-white font-bold text-sm sm:text-base shadow-[0_4px_16px_rgba(78,155,143,0.35)] hover:shadow-[0_6px_22px_rgba(78,155,143,0.5)] transition-all active:scale-[0.99] cursor-pointer flex items-center justify-center gap-2 disabled:opacity-60"
+          >
+            {isLoading ? (
+              <>
+                <FontAwesomeIcon icon={faCircleNotch} className="w-4 h-4 animate-spin" />
+                <span>Memverifikasi Akun...</span>
+              </>
+            ) : (
+              <>
+                <span>Login to Waskita</span>
+                <FontAwesomeIcon icon={faArrowRight} className="w-3.5 h-3.5" />
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+
+      {/* Switch to Register */}
+      <div className="text-center pt-2 text-xs text-[#9DC4B9]">
+        Don&apos;t have an account?{" "}
+        <Link
+          href="/daftar"
+          className="text-[#54B7A5] hover:text-white font-semibold underline underline-offset-2 transition-colors"
+        >
+          Register Now
+        </Link>
+      </div>
+    </AuthLayoutCard>
   );
 }
